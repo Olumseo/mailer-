@@ -1,0 +1,11 @@
+node_modules
+.next
+out
+.env
+.env*.local
+*.log
+data/sent-emails.jsonl
+.httpcamp
+.DS_Store
+.vercel
+next-env.d.ts

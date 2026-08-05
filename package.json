@@ -1,0 +1,37 @@
+{
+  "name": "olum-outreach-app",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Olum AI outreach mailer — Next.js control plane over Microsoft Graph with tick-based drip sending, reply detection, and a meetings handler.",
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "next lint",
+    "mailer": "tsx scripts/mailer.ts",
+    "tick": "tsx scripts/tick.ts",
+    "tick:loop": "tsx scripts/tick.ts --loop",
+    "company:selftest": "tsx scripts/company-name-selftest.ts",
+    "report:selftest": "tsx scripts/report-selftest.ts",
+    "report:dbtest": "tsx scripts/report-dbtest.ts",
+    "report:migrationtest": "tsx scripts/report-migrationtest.ts"
+  },
+  "dependencies": {
+    "@electric-sql/pglite": "^0.5.4",
+    "@neondatabase/serverless": "^0.10.4",
+    "imapflow": "^1.6.1",
+    "next": "^15.1.6",
+    "nodemailer": "^9.0.3",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "xlsx": "^0.18.5"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "@types/nodemailer": "^8.0.1",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.0"
+  }
+}
