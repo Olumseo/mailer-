@@ -1,11 +1,28 @@
 node_modules
 .next
 out
-.env
-.env*.local
 *.log
-data/sent-emails.jsonl
+
+# Secrets — every .env variant, however it's named. Only .env.example is tracked.
+.env
+.env.*
+!.env.example
+
+# Runtime data: DB snapshots and sent-mail logs hold real recipient addresses
+# and message bodies. Nothing in data/ is committed.
+data/*
+!data/.gitkeep
+
+# Build artifacts (tsbuildinfo embeds absolute local paths).
+tsconfig.tsbuildinfo
+*.tsbuildinfo
+next-env.d.ts
+
+# Prospect lists dropped in for a campaign import.
+*.xlsx
+*.xls
+*.csv
+
 .httpcamp
 .DS_Store
 .vercel
-next-env.d.ts

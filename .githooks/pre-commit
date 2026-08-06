@@ -1,0 +1,4 @@
+#!/bin/sh
+# Blocks commits that contain credentials. Enable with:
+#   git config core.hooksPath .githooks
+exec npx --no-install tsx scripts/check-secrets.ts

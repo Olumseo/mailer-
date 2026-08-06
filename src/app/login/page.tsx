@@ -16,7 +16,9 @@ export default async function LoginPage({
         <input type="password" name="password" autoFocus />
         {error ? (
           <p className="hint" style={{ color: "var(--bad)", marginTop: 10 }}>
-            Incorrect password.
+            {error === "rate"
+              ? "Too many attempts. Wait a few minutes and try again."
+              : "Incorrect password."}
           </p>
         ) : null}
         <div style={{ marginTop: 16 }}>

@@ -17,7 +17,7 @@ async function main() {
     personName: "Verification Test",
     company: "Olum QA",
     website: "https://olum.ai",
-    email: "qa-test@olum.ai",
+    email: "qa-test@example.invalid",
     phone: "+91 98765 43210",
     meetingId: "TEST-VERIFY-123",
     meetingAt: new Date(Date.now() + 26 * 3600_000).toISOString(), // ~26h out
@@ -35,7 +35,7 @@ async function main() {
   console.log("✅ row persisted:", row.person_name, "| mobile:", row.phone, "| mtgId:", row.meeting_id);
 
   const ev = (await sql`
-    SELECT type FROM events WHERE ref='qa-test@olum.ai' ORDER BY id DESC LIMIT 1`) as {
+    SELECT type FROM events WHERE ref='qa-test@example.invalid' ORDER BY id DESC LIMIT 1`) as {
     type: string;
   }[];
   if (ev[0]?.type === "meeting_booked") console.log("✅ team notification email SENT (event: meeting_booked)");

@@ -8,6 +8,8 @@
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
+    "check:secrets": "tsx scripts/check-secrets.ts --all",
+    "hooks:install": "git config core.hooksPath .githooks",
     "mailer": "tsx scripts/mailer.ts",
     "tick": "tsx scripts/tick.ts",
     "tick:loop": "tsx scripts/tick.ts --loop",

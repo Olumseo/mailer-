@@ -18,10 +18,10 @@ async function main() {
 
   // 2) Spintax uniqueness — renders should differ
   const sender: Sender = {
-    key: "2", displayName: "Rohan", email: "rohan@tryolumai.com",
-    title: "Founder, Olum AI", bookingLink: "https://book.example/rohan",
+    key: "2", displayName: "Test Sender", email: "sender@example.invalid",
+    title: "Founder, Example Co", bookingLink: "https://book.example/sender",
     smtpHost: "smtp.zoho.in", smtpPort: 465, imapHost: "imap.zoho.in", imapPort: 993,
-    user: "rohan@tryolumai.com", pass: "x",
+    user: "sender@example.invalid", pass: "x",
   };
   const variants = new Set(
     Array.from({ length: 20 }, () =>

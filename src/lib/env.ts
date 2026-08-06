@@ -50,17 +50,19 @@ export function getAllSenders(): Sender[] {
 
 // ─── Product-feedback (users report) campaigns ───────────────────────
 
-/** Which mailbox sends the users-report campaign. Defaults to Barath's. */
+/** Which mailbox sends the users-report campaign. Set REPORT_SENDER; the
+ *  first configured sender is the fallback. */
 export function getReportSenderKey(): SenderKey {
   const keys = getSenderKeys();
   const explicit = opt("REPORT_SENDER");
   if (explicit && keys.includes(explicit)) return explicit;
-  const barath = keys.find((k) => /^barath@/i.test(opt(`SENDER_EMAIL_${k}`)));
-  return barath ?? keys[0];
+  return keys[0];
 }
 
-/** Name used in the "grab 15 minutes with X, our founder" line. */
-export const getFounderName = () => opt("FOUNDER_NAME", "Rohan");
+/** Name used in the "grab 15 minutes with X, our founder" line. Falls back to
+ *  sender 1's first name rather than a name hardcoded into the source. */
+export const getFounderName = () =>
+  opt("FOUNDER_NAME") || opt("SENDER_NAME_1").split(/\s+/)[0] || "";
 
 /** Domains whose users are our own staff — never mailed as customers.
  *  Derived from the sender mailboxes plus INTERNAL_DOMAINS, so it keeps
@@ -129,6 +131,27 @@ export const getMeetingTzOffset = () => num("MEETING_TZ_OFFSET", 5.5);
 
 export const CRON_SECRET = () => req("CRON_SECRET");
 export const ACCESS_PASSWORD = () => req("ACCESS_PASSWORD");
-export const NOTIFY_EMAIL = () => opt("NOTIFY_EMAIL", "barath@olum.ai");
+/** Falls back to sender 1's mailbox rather than a hardcoded address, so no
+ *  real inbox is baked into the source. */
+export const NOTIFY_EMAIL = () =>
+  opt("NOTIFY_EMAIL") || opt(`SENDER_EMAIL_${NOTIFY_SENDER()}`);
 export const NOTIFY_SENDER = () => (opt("NOTIFY_SENDER", "1") as SenderKey);
 export const MAX_SENDS_PER_TICK = () => num("MAX_SENDS_PER_TICK", 4);
+
+/** Strip credentials out of text before it goes into an HTTP response.
+ *  Driver errors love to quote the connection string back at you, and cron
+ *  responses are read by a third-party scheduler's log viewer. */
+export function redactSecrets(text: string): string {
+  let out = text
+    // postgres://user:pass@host → postgres://***:***@host
+    .replace(/([a-z][a-z0-9+.-]*:\/\/)[^:@/\s]+:[^@/\s]+@/gi, "$1***:***@");
+  for (const name of ["DATABASE_URL", "CRON_SECRET", "ACCESS_PASSWORD"]) {
+    const v = process.env[name];
+    if (v && v.length >= 8) out = out.split(v).join(`<${name}>`);
+  }
+  for (let i = 1; i <= 12; i++) {
+    const p = process.env[`SMTP_PASS_${i}`];
+    if (p && p.length >= 6) out = out.split(p).join(`<SMTP_PASS_${i}>`);
+  }
+  return out;
+}

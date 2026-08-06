@@ -32,7 +32,7 @@ async function main() {
 
   // 3) sent email persisted to the DB
   const marker = `verify4-${Date.now()}@example.invalid`;
-  await recordSentEmail({ campaignId: null, sender: "barath@olum.ai", to: marker, company: "LogCo", subject: "S", body: "B" });
+  await recordSentEmail({ campaignId: null, sender: "sender@example.invalid", to: marker, company: "LogCo", subject: "S", body: "B" });
   const found = (await sql`SELECT id FROM sent_emails WHERE to_email=${marker}`) as { id: number }[];
   if (found.length === 1) { ok("sent email persisted to sent_emails table"); await sql`DELETE FROM sent_emails WHERE to_email=${marker}`; }
   else er(`sent_emails row missing (found ${found.length})`);

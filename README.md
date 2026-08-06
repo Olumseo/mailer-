@@ -65,9 +65,14 @@ Each of the 3 mailboxes uses client-credentials auth. In **Azure Portal → App 
 2. Add all env vars from `.env.example` (Project → Settings → Environment Variables).
    Generate a long random `CRON_SECRET` and set an `ACCESS_PASSWORD`.
 3. Deploy.
-4. **Create the tables** — open once in your browser:
-   `https://YOUR-APP.vercel.app/api/setup?key=YOUR_CRON_SECRET`
-   (returns `{ "ok": true }`).
+4. **Create the tables** — run once (returns `{ "ok": true }`):
+
+   ```bash
+   curl -H "Authorization: Bearer $CRON_SECRET" https://YOUR-APP.vercel.app/api/setup
+   ```
+
+   `?key=...` also works, but a secret in a URL ends up in access logs and browser
+   history — prefer the header.
 
 ## 4. The 1-minute cron (cron-job.org)
 
@@ -76,7 +81,9 @@ free external cron:
 
 1. Sign up at [cron-job.org](https://console.cron-job.org).
 2. Create a job:
-   - **URL:** `https://YOUR-APP.vercel.app/api/cron?key=YOUR_CRON_SECRET`
+   - **URL:** `https://YOUR-APP.vercel.app/api/cron`
+   - **Header:** `Authorization: Bearer YOUR_CRON_SECRET` (cron-job.org → Advanced →
+     Headers). `?key=YOUR_CRON_SECRET` still works but logs the secret in plain text.
    - **Schedule:** every 1 minute
    - Method GET is fine.
 3. Save. Each run returns a JSON summary of `{ sends, replies, reminders }`.
@@ -189,7 +196,7 @@ below.
 
 Report campaigns add columns: `campaigns.kind`, and `recipients.segment` /
 `subject_override` / `body_override` / `vars`. They're in `ALTER_STATEMENTS`, so
-`/api/setup?key=YOUR_CRON_SECRET` adds them — but you no longer have to remember to.
+a `/api/setup` call adds them — but you no longer have to remember to.
 
 Queries that need those columns are wrapped in `withSchema()`, which catches a missing-column
 error once, runs the idempotent migration, and retries. Without it, deploying this release
@@ -199,8 +206,9 @@ metadata-only (nullable columns, plus one with a default) and runs at most once 
 
 ## Environment variables
 
-See `.env.example`. Key ones: `TENANT_ID`, `CLIENT_ID_1..3` / `CLIENT_SECRET_1..3`,
-`SENDER_EMAIL_1..3`, `DATABASE_URL`, `CRON_SECRET`, `ACCESS_PASSWORD`, `NOTIFY_EMAIL`.
+See `.env.example` — a template of placeholders only. Real values live in `.env`, which is
+gitignored and must never be committed. Key ones: `SENDER_EMAIL_1..12` / `SMTP_PASS_1..12`,
+`DATABASE_URL`, `CRON_SECRET`, `ACCESS_PASSWORD`, `NOTIFY_EMAIL`.
 Pacing (`DELAY_*`, `PAUSE_*`, `MAX_SENDS_PER_TICK`) and the sending window
 (`BUSINESS_*`) are all tunable without code changes.
 
@@ -210,7 +218,8 @@ Pacing (`DELAY_*`, `PAUSE_*`, `MAX_SENDS_PER_TICK`) and the sending window
 npm install
 cp .env.example .env   # fill in real values incl. a Neon DATABASE_URL
 npm run dev            # http://localhost:3000
-# then hit http://localhost:3000/api/setup?key=YOUR_CRON_SECRET once
+# then create the tables once:
+# curl -H "Authorization: Bearer $CRON_SECRET" http://localhost:3000/api/setup
 ```
 
 `scripts/selftest.ts` (`npx tsx scripts/selftest.ts`) validates Excel parsing, spintax, and
@@ -225,3 +234,39 @@ business-hours scheduling without touching the database.
   the jittered 45–120s spacing will actually release, so spacing, not the cap, is the throttle.
 - The access gate is a single shared password (fine for an internal tool). Swap for SSO if this
   ever needs per-user auth.
+
+## Security
+
+Nothing secret is in this repo, and it has to stay that way.
+
+**Where secrets live.** Only `.env` (local, gitignored) and Vercel → Settings → Environment
+Variables. `.env.example` is a placeholder template — putting a real value there publishes it.
+`data/` is gitignored entirely: snapshots and sent-mail logs contain real recipient addresses
+and message bodies.
+
+**Before you commit.** Install the pre-commit secret scanner once per clone:
+
+```bash
+npm run hooks:install
+```
+
+It blocks commits containing DB URLs with passwords, API keys, private keys, or a `.env` file.
+Scan everything already tracked with `npm run check:secrets`.
+
+**Rotate on exposure.** A secret that has been pushed, pasted into a URL, or sent to a
+third-party scheduler is burned — rotating is the only fix, because git history and logs keep
+copies forever:
+
+- `ACCESS_PASSWORD` — change the env var; every session cookie invalidates automatically.
+- `CRON_SECRET` — change the env var, then update the cron job's header.
+- `SMTP_PASS_N` — revoke in Zoho → Settings → Security → App Passwords, issue a new one.
+- `DATABASE_URL` — reset the role's password in Neon.
+
+**How the gate works.** The cookie holds `HMAC-SHA256(ACCESS_PASSWORD)`, not the password, so a
+leaked cookie can't reveal a password that might be reused elsewhere. Login attempts are
+throttled per IP and compared in constant time. All responses carry `X-Robots-Tag: noindex`,
+`X-Frame-Options: DENY`, and `Referrer-Policy: no-referrer`.
+
+**Repo visibility.** This tool reads a live prospect database. Even with no secrets in the
+source, the repo should be private — a public one hands an attacker the exact auth scheme,
+route list, and DB schema to work against.

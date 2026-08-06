@@ -7,7 +7,7 @@ async function main() {
   const { recordSentEmail } = await import("../src/lib/db");
   await recordSentEmail({
     campaignId: null,
-    sender: "barath@olum.ai",
+    sender: "sender@example.invalid",
     to: "sent-http@example.invalid",
     company: "HTTP Sent Co",
     subject: "HTTP Sent Test",
