@@ -1,4 +1,4 @@
-import type { Sender, SenderKey, DelayConfig, BusinessHours } from "./types";
+import type { Sender, SenderKey, DelayConfig, BusinessHours, Transport, SmtpAuth } from "./types";
 
 function req(name: string): string {
   const v = process.env[name];
@@ -16,22 +16,86 @@ function num(name: string, fallback: number): number {
   return Number.isFinite(n) ? n : fallback;
 }
 
-/** Build a Zoho sender from its numbered env vars. Secrets never leave the server.
+/** A sender's transport. Explicit SENDER_TRANSPORT_N wins; otherwise a mailbox
+ *  that has Graph credentials but no SMTP password is inferred as Graph, so
+ *  adding an M365 mailbox needs no extra flag. */
+function getTransport(key: SenderKey): Transport {
+  const explicit = opt(`SENDER_TRANSPORT_${key}`).trim().toLowerCase();
+  if (explicit === "graph" || explicit === "smtp") return explicit;
+  const hasGraph = !!opt(`GRAPH_CLIENT_ID_${key}`).trim();
+  const hasSmtpPass = !!opt(`SMTP_PASS_${key}`).trim();
+  return hasGraph && !hasSmtpPass ? "graph" : "smtp";
+}
+
+interface MailHosts {
+  smtpHost: string;
+  smtpPort: number;
+  imapHost: string;
+  imapPort: number;
+}
+
+/** Known provider host/port pairs, so adding a mailbox is one env var instead
+ *  of four. All use implicit TLS (465 SMTP / 993 IMAP). */
+const PROVIDERS: Record<string, MailHosts> = {
+  gmail: { smtpHost: "smtp.gmail.com", smtpPort: 465, imapHost: "imap.gmail.com", imapPort: 993 },
+  zoho: { smtpHost: "smtp.zoho.in", smtpPort: 465, imapHost: "imap.zoho.in", imapPort: 993 },
+  "zoho-com": { smtpHost: "smtp.zoho.com", smtpPort: 465, imapHost: "imap.zoho.com", imapPort: 993 },
+};
+
+/** A sender's mail hosts. Precedence: explicit SMTP_HOST_N/IMAP_HOST_N →
+ *  SENDER_PROVIDER_N preset → preset inferred from the address domain →
+ *  the ZOHO_* globals (so the original senders keep working untouched). */
+function getHosts(key: SenderKey): MailHosts {
+  const domain = opt(`SENDER_EMAIL_${key}`).split("@")[1]?.toLowerCase() ?? "";
+  const named = opt(`SENDER_PROVIDER_${key}`).trim().toLowerCase();
+  const preset =
+    PROVIDERS[named] ??
+    (domain === "gmail.com" || domain === "googlemail.com" ? PROVIDERS.gmail : null);
+
+  const base: MailHosts = preset ?? {
+    smtpHost: opt("ZOHO_SMTP_HOST", "smtp.zoho.in"),
+    smtpPort: num("ZOHO_SMTP_PORT", 465),
+    imapHost: opt("ZOHO_IMAP_HOST", "imap.zoho.in"),
+    imapPort: num("ZOHO_IMAP_PORT", 993),
+  };
+
+  return {
+    smtpHost: opt(`SMTP_HOST_${key}`) || base.smtpHost,
+    smtpPort: num(`SMTP_PORT_${key}`, base.smtpPort),
+    imapHost: opt(`IMAP_HOST_${key}`) || base.imapHost,
+    imapPort: num(`IMAP_PORT_${key}`, base.imapPort),
+  };
+}
+
+/** Build a sender from its numbered env vars. Secrets never leave the server.
  *  Uses opt() (not req()) so UI pages still render before creds are filled in;
- *  the SMTP/IMAP layer throws a clear error if email/pass are missing. */
+ *  the SMTP/Graph layer throws a clear error if credentials are missing. */
 export function getSender(key: SenderKey): Sender {
+  const hosts = getHosts(key);
   return {
     key,
     displayName: opt(`SENDER_NAME_${key}`, `Sender ${key}`),
     email: opt(`SENDER_EMAIL_${key}`),
     title: opt(`SENDER_TITLE_${key}`),
     bookingLink: opt(`BOOKING_LINK_${key}`),
-    smtpHost: opt("ZOHO_SMTP_HOST", "smtp.zoho.in"),
-    smtpPort: num("ZOHO_SMTP_PORT", 465),
-    imapHost: opt("ZOHO_IMAP_HOST", "imap.zoho.in"),
-    imapPort: num("ZOHO_IMAP_PORT", 993),
+    transport: getTransport(key),
+    ...hosts,
     user: opt(`SMTP_USER_${key}`) || opt(`SENDER_EMAIL_${key}`),
     pass: opt(`SMTP_PASS_${key}`),
+    // A refresh token means XOAUTH2; otherwise fall back to an app password.
+    smtpAuth: (opt(`GOOGLE_REFRESH_TOKEN_${key}`).trim()
+      ? "oauth2"
+      : "password") as SmtpAuth,
+    // One Cloud project normally covers every Gmail mailbox; the refresh token
+    // is always per mailbox, since it represents that account's consent.
+    googleClientId: opt(`GOOGLE_CLIENT_ID_${key}`) || opt("GOOGLE_CLIENT_ID"),
+    googleClientSecret: opt(`GOOGLE_CLIENT_SECRET_${key}`) || opt("GOOGLE_CLIENT_SECRET"),
+    googleRefreshToken: opt(`GOOGLE_REFRESH_TOKEN_${key}`),
+    // One tenant covers every M365 mailbox; per-sender override is allowed in
+    // case a mailbox ever lives in a different directory.
+    graphTenantId: opt(`GRAPH_TENANT_ID_${key}`) || opt("GRAPH_TENANT_ID"),
+    graphClientId: opt(`GRAPH_CLIENT_ID_${key}`),
+    graphClientSecret: opt(`GRAPH_CLIENT_SECRET_${key}`),
   };
 }
 
@@ -67,10 +131,27 @@ export const getFounderName = () =>
 /** Domains whose users are our own staff — never mailed as customers.
  *  Derived from the sender mailboxes plus INTERNAL_DOMAINS, so it keeps
  *  working if the product domain changes. */
+/** Free/public mailbox providers. A sender on one of these is still just one
+ *  person — treating its whole domain as "our staff" would silently exclude
+ *  every consumer signup from report campaigns. */
+const PUBLIC_MAIL_DOMAINS = new Set([
+  "gmail.com",
+  "googlemail.com",
+  "outlook.com",
+  "hotmail.com",
+  "live.com",
+  "yahoo.com",
+  "icloud.com",
+  "proton.me",
+  "protonmail.com",
+  "zoho.com",
+  "zohomail.com",
+]);
+
 export function getInternalDomains(): string[] {
   const fromSenders = getSenderKeys()
     .map((k) => opt(`SENDER_EMAIL_${k}`).split("@")[1]?.toLowerCase())
-    .filter(Boolean) as string[];
+    .filter((d): d is string => !!d && !PUBLIC_MAIL_DOMAINS.has(d));
   const extra = opt("INTERNAL_DOMAINS", "olum.ai")
     .split(",")
     .map((s) => s.trim().toLowerCase())
@@ -145,13 +226,24 @@ export function redactSecrets(text: string): string {
   let out = text
     // postgres://user:pass@host → postgres://***:***@host
     .replace(/([a-z][a-z0-9+.-]*:\/\/)[^:@/\s]+:[^@/\s]+@/gi, "$1***:***@");
-  for (const name of ["DATABASE_URL", "CRON_SECRET", "ACCESS_PASSWORD"]) {
+  for (const name of [
+    "DATABASE_URL",
+    "CRON_SECRET",
+    "ACCESS_PASSWORD",
+    "GOOGLE_CLIENT_SECRET",
+  ]) {
     const v = process.env[name];
     if (v && v.length >= 8) out = out.split(v).join(`<${name}>`);
   }
   for (let i = 1; i <= 12; i++) {
-    const p = process.env[`SMTP_PASS_${i}`];
-    if (p && p.length >= 6) out = out.split(p).join(`<SMTP_PASS_${i}>`);
+    for (const name of [
+      `SMTP_PASS_${i}`,
+      `GRAPH_CLIENT_SECRET_${i}`,
+      `GOOGLE_REFRESH_TOKEN_${i}`,
+    ]) {
+      const p = process.env[name];
+      if (p && p.length >= 6) out = out.split(p).join(`<${name}>`);
+    }
   }
   return out;
 }

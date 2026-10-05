@@ -14,6 +14,7 @@ import { sql } from "@/lib/db";
 import {
   getMeetingTzOffset,
   getSender,
+  getSenderKeys,
   getReportSenderKey,
   getFounderName,
   getInternalDomains,
@@ -42,6 +43,14 @@ export async function createCampaignAction(formData: FormData): Promise<void> {
     throw new Error("Name, subject, body and an Excel file are all required.");
   }
 
+  // Blank => round-robin every mailbox; otherwise pin the whole list to one.
+  // Validated against the live keys so a stale form can't name a dead mailbox.
+  const picked = String(formData.get("senderKey") ?? "").trim();
+  if (picked && !getSenderKeys().includes(picked as SenderKey)) {
+    throw new Error("That sender mailbox is no longer configured.");
+  }
+  const senderKey = picked ? (picked as SenderKey) : undefined;
+
   // Selected sheets (empty => all sheets merged).
   const sheets = formData.getAll("sheets").map(String).filter(Boolean);
   const parsed = await parseWorkbook(await file.arrayBuffer(), sheets);
@@ -60,6 +69,7 @@ export async function createCampaignAction(formData: FormData): Promise<void> {
     sourceFile: file.name,
     rows: parsed.rows,
     duplicatesRemoved: parsed.duplicates,
+    senderKey,
   });
 
   revalidatePath("/");

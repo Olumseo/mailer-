@@ -20,8 +20,12 @@ async function main() {
   const sender: Sender = {
     key: "2", displayName: "Test Sender", email: "sender@example.invalid",
     title: "Founder, Example Co", bookingLink: "https://book.example/sender",
+    transport: "smtp",
     smtpHost: "smtp.zoho.in", smtpPort: 465, imapHost: "imap.zoho.in", imapPort: 993,
     user: "sender@example.invalid", pass: "x",
+    smtpAuth: "password",
+    graphTenantId: "", graphClientId: "", graphClientSecret: "",
+    googleClientId: "", googleClientSecret: "", googleRefreshToken: "",
   };
   const variants = new Set(
     Array.from({ length: 20 }, () =>

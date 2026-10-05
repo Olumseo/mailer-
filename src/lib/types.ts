@@ -2,19 +2,39 @@
 // the SENDER_EMAIL_N env vars, so adding senders is config-only.
 export type SenderKey = string;
 
+/** How a mailbox talks to the world. Zoho mailboxes use SMTP+IMAP with an
+ *  app password; Microsoft 365 / Outlook mailboxes use Graph, because M365 has
+ *  retired basic-auth SMTP. Set per sender with SENDER_TRANSPORT_N. */
+export type Transport = "smtp" | "graph";
+
+/** How an SMTP/IMAP mailbox authenticates. "password" is an app-specific
+ *  password; "oauth2" is XOAUTH2 with a Google OAuth refresh token, for
+ *  accounts that cannot or will not enable 2-Step Verification. */
+export type SmtpAuth = "password" | "oauth2";
+
 export interface Sender {
   key: SenderKey;
   displayName: string;
   email: string;
   title: string; // "" => team tone
   bookingLink: string;
-  // Zoho SMTP (send) + IMAP (reply polling)
+  transport: Transport;
+  // Zoho SMTP (send) + IMAP (reply polling) — transport "smtp"
   smtpHost: string;
   smtpPort: number;
   imapHost: string;
   imapPort: number;
   user: string; // login (usually the email)
-  pass: string; // Zoho app-specific password
+  pass: string; // app-specific password (auth "password")
+  smtpAuth: SmtpAuth;
+  // Google OAuth (auth "oauth2") — one Cloud project, one refresh token each
+  googleClientId: string;
+  googleClientSecret: string;
+  googleRefreshToken: string;
+  // Microsoft Graph client credentials — transport "graph"
+  graphTenantId: string;
+  graphClientId: string;
+  graphClientSecret: string;
 }
 
 export interface DelayConfig {

@@ -4,8 +4,16 @@ import { useState } from "react";
 import { createCampaignAction } from "@/app/actions";
 
 type Sheet = { name: string; count: number };
+type SenderOption = { key: string; name: string; email: string };
 
-export function CampaignForm({ defaultTemplate }: { defaultTemplate: string }) {
+export function CampaignForm({
+  defaultTemplate,
+  senders,
+}: {
+  defaultTemplate: string;
+  senders: SenderOption[];
+}) {
+  const [senderKey, setSenderKey] = useState("");
   const [sheets, setSheets] = useState<Sheet[] | null>(null);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(false);
@@ -62,6 +70,23 @@ export function CampaignForm({ defaultTemplate }: { defaultTemplate: string }) {
           defaultValue="Businesses searching for bookkeeping help in Singapore"
           required
         />
+
+        <label>Send from</label>
+        <select name="senderKey" value={senderKey} onChange={(e) => setSenderKey(e.target.value)}>
+          <option value="">All mailboxes — split evenly ({senders.length} senders)</option>
+          {senders.map((s) => (
+            <option key={s.key} value={s.key}>
+              {s.name} — {s.email}
+            </option>
+          ))}
+        </select>
+        <p className="hint">
+          {senderKey
+            ? `Every email in this campaign goes out from ${
+                senders.find((s) => s.key === senderKey)?.email ?? "the selected mailbox"
+              }.`
+            : "Recipients are round-robined across every configured mailbox. Pick one to send the whole list from a single address."}
+        </p>
 
         <label>Recipient list (.xlsx)</label>
         <input type="file" name="file" accept=".xlsx,.xls" required onChange={onFile} />

@@ -32,24 +32,101 @@ and fires meeting reminders. Nothing sleeps; everything is resumable.
 - **Meetings handler** — log a booked meeting (person, company, website, meeting ID, time).
   The team is notified immediately, and the attendee gets automatic **24h + 1h reminders**.
 
-## 1. Azure app registrations (permissions)
+## 1. Mailboxes (Zoho SMTP or Microsoft 365 Graph)
 
-Each of the 3 mailboxes uses client-credentials auth. In **Azure Portal → App registrations
-→ (each app) → API permissions**, add **Application** permissions and click
-**"Grant admin consent for olum.ai"**:
+Each sender is a numbered block of env vars (`SENDER_EMAIL_1`, `_2`, …). A sender uses one of
+two transports, picked automatically:
+
+| Mailbox | Transport | Credentials |
+|---|---|---|
+| Zoho (`@tryolumai.com`) | SMTP + IMAP | `SMTP_PASS_N` — a Zoho app-specific password |
+| Gmail / Google Workspace | SMTP + IMAP | `SMTP_PASS_N` (app password) **or** `GOOGLE_REFRESH_TOKEN_N` (OAuth) |
+| Microsoft 365 / Outlook (`@olum.ai`) | Microsoft Graph | `GRAPH_CLIENT_ID_N` + `GRAPH_CLIENT_SECRET_N` |
+
+A sender with `GRAPH_CLIENT_ID_N` set and no `SMTP_PASS_N` is treated as a Graph mailbox;
+`SENDER_TRANSPORT_N=graph|smtp` forces it. Microsoft retired basic-auth SMTP, so an M365
+mailbox **must** go through Graph — there is no password to put in `SMTP_PASS_N`.
+
+Hosts are resolved per sender: explicit `SMTP_HOST_N`/`IMAP_HOST_N` win, else the
+`SENDER_PROVIDER_N` preset (`gmail`, `zoho`, `zoho-com`), else a preset inferred from the
+address domain (`@gmail.com` → Gmail), else the `ZOHO_*` globals. So senders on different
+providers can run side by side.
+
+### Adding a Gmail mailbox
+
+Pick one of two auth methods. If `GOOGLE_REFRESH_TOKEN_N` is set the sender uses OAuth;
+otherwise it uses the app password in `SMTP_PASS_N`.
+
+**A. App password** (simplest, but requires 2-Step Verification on the account)
+
+1. [myaccount.google.com/security](https://myaccount.google.com/security) → turn on
+   **2-Step Verification**. App passwords do not exist without it.
+2. [myaccount.google.com/apppasswords](https://myaccount.google.com/apppasswords) → create one.
+   Paste the 16 characters into `SMTP_PASS_N` **with no spaces**. The normal account password
+   will not work.
+
+**B. OAuth 2.0** (no 2FA needed; more setup). One Google Cloud project covers every Gmail
+mailbox — the refresh token is per mailbox.
+
+1. [console.cloud.google.com](https://console.cloud.google.com) → create or pick a project.
+2. **APIs & Services → Library** → enable the **Gmail API**.
+3. **OAuth consent screen** → *External* → add the scope `https://mail.google.com/`, and add
+   the mailbox under *Test users*. The narrower `gmail.send` scope will not work — IMAP reply
+   polling needs the full mail scope, which Google classes as **restricted**.
+4. **Publish the app.** Left in *Testing*, Google expires refresh tokens after **7 days** and
+   sending breaks weekly. Publishing a restricted scope may require Google's app-verification
+   review.
+5. **Credentials → Create credentials → OAuth client ID → Desktop app.** That client type is
+   what permits the `http://localhost:53682/` redirect the setup script listens on. Put the id
+   and secret in `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET`.
+6. Run the consent flow and paste the line it prints into `.env`:
+
+   ```bash
+   npx tsx scripts/google-oauth-setup.ts --sender 6
+   ```
+
+   Google will warn that the app is unverified — *Advanced → Go to … (unsafe)*. Sign in **as
+   the mailbox being authorised**, not your own account.
+
+**Either way:** enable IMAP on the mailbox — Gmail → Settings → See all settings →
+Forwarding and POP/IMAP → *Enable IMAP*. Without it the mailbox sends fine but never
+registers replies. Then set `SENDER_EMAIL_N` / `SENDER_NAME_N` and run `npm run verify:mail`.
+
+> 📉 **Volume.** A free `@gmail.com` account is capped around 500 recipients/day (Workspace
+> ~2,000), and Gmail is stricter than Zoho about cold outreach from a fresh account. Warm it
+> up slowly and keep `MAX_SENDS_PER_TICK` low.
+
+### Checking mailboxes
+
+```bash
+npm run verify:mail                                        # every sender
+npx tsx scripts/verify-senders.ts --sender 6               # just one
+npx tsx scripts/verify-senders.ts --sender 6 --send you@example.com   # real test email
+```
+
+### Azure app registration (Graph senders only)
+
+In **Azure Portal → App registrations → (your app)**:
+
+1. **Overview** — copy the *Application (client) ID* → `GRAPH_CLIENT_ID_N`, and the
+   *Directory (tenant) ID* → `GRAPH_TENANT_ID` (shared by all Graph senders).
+2. **Certificates & secrets → New client secret** — copy the **Value** (not the Secret ID) into
+   `GRAPH_CLIENT_SECRET_N`. It is shown once and it **expires**; a dead secret shows up as
+   `AADSTS7000222` in the cron log.
+3. **API permissions** — add **Application** (not Delegated) permissions, then
+   **"Grant admin consent"**:
 
 | Permission | Type | Why |
 |---|---|---|
-| `Mail.Send` | Application | Send the campaign (you already have this) |
-| `Mail.Read` | Application | **Add this** — lets the tool detect replies and alert Barath |
+| `Mail.Send` | Application | Send the campaign |
+| `Mail.Read` | Application | Detect replies and alert the team |
 
-> ⚠️ **Check your client IDs.** `CLIENT_ID_2` (rohann) and `CLIENT_ID_3` (rohansathish) are the
-> same GUID in what you sent me. Each mailbox is normally its own app registration with its own
-> client ID — confirm account 2's client ID before going live, or reply detection/sending for
-> that mailbox may misbehave.
+> ⚠️ **One app per mailbox.** Sharing a client ID across mailboxes works, but one expired secret
+> then takes every mailbox down at once. (The older `outreach-mailer/` CLI had `CLIENT_ID_2` and
+> `CLIENT_ID_3` set to the same GUID — don't carry that over.)
 
-> 🔒 **Optional hardening.** Application `Mail.Send`/`Mail.Read` grant access to *every* mailbox
-> in the tenant. Lock each app to just its one mailbox with an Exchange
+> 🔒 **Hardening.** Application `Mail.Send`/`Mail.Read` grant access to *every* mailbox in the
+> tenant. Lock each app to its one mailbox with an Exchange
 > [Application Access Policy](https://learn.microsoft.com/en-us/graph/auth-limit-mailbox-access)
 > (`New-ApplicationAccessPolicy`).
 
