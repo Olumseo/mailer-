@@ -25,6 +25,7 @@ import type { Segment } from "@/lib/report";
 import { buildRows, selectRecipients, emptyCopy } from "@/lib/report-campaign";
 import type { ReportCampaignConfig } from "@/lib/report-campaign";
 import type { SenderKey } from "@/lib/types";
+import { approveDrafts, rejectDrafts, saveDraftEdit, syncActivity } from "@/lib/activity";
 
 /** Interpret a `datetime-local` value ("2026-07-25T14:30") as IST wall-clock
  *  time and return the real UTC instant. */
@@ -285,4 +286,47 @@ export async function deleteEventAction(formData: FormData): Promise<void> {
 export async function clearActivityAction(): Promise<void> {
   await sql`DELETE FROM events`;
   revalidatePath("/");
+}
+
+// ─── Activity outreach approvals ─────────────────────────────────────
+
+function draftIds(formData: FormData): number[] {
+  return formData
+    .getAll("id")
+    .map((v) => Number(v))
+    .filter((n) => Number.isInteger(n) && n > 0);
+}
+
+export async function approveDraftsAction(formData: FormData): Promise<void> {
+  const ids = draftIds(formData);
+  // A single-draft approve carries its (possibly edited) text: save it first so
+  // what gets queued is exactly what the approver was looking at.
+  if (ids.length === 1 && formData.has("subject")) {
+    const subject = String(formData.get("subject") ?? "").trim();
+    const body = String(formData.get("body") ?? "").trim();
+    if (!subject || !body) throw new Error("Subject and body can't be empty.");
+    await saveDraftEdit(ids[0], subject, body);
+  }
+  await approveDrafts(ids);
+  revalidatePath("/approvals");
+  revalidatePath("/");
+}
+
+export async function rejectDraftsAction(formData: FormData): Promise<void> {
+  await rejectDrafts(draftIds(formData));
+  revalidatePath("/approvals");
+}
+
+export async function saveDraftAction(formData: FormData): Promise<void> {
+  const [id] = draftIds(formData);
+  const subject = String(formData.get("subject") ?? "").trim();
+  const body = String(formData.get("body") ?? "").trim();
+  if (!id || !subject || !body) throw new Error("Subject and body can't be empty.");
+  await saveDraftEdit(id, subject, body);
+  revalidatePath("/approvals");
+}
+
+export async function syncActivityNowAction(): Promise<void> {
+  await syncActivity({ force: true });
+  revalidatePath("/approvals");
 }

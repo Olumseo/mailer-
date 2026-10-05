@@ -126,7 +126,12 @@ export interface ReportVarOptions {
 
 function humanDate(raw: string): string {
   if (!raw) return "";
-  const d = new Date(raw.length <= 10 ? `${raw}T00:00:00Z` : raw.replace(" ", "T") + "Z");
+  // The live feed sends full ISO with an offset ("…+00:00"); the .xlsx sends
+  // "YYYY-MM-DD[ HH:MM]" with no zone, which is UTC by the report's legend.
+  const zoned = /(?:[zZ]|[+-]\d\d:?\d\d)$/.test(raw.trim());
+  const d = zoned
+    ? new Date(raw.trim())
+    : new Date(raw.length <= 10 ? `${raw}T00:00:00Z` : raw.replace(" ", "T") + "Z");
   if (Number.isNaN(d.getTime())) return "";
   return new Intl.DateTimeFormat("en-GB", {
     timeZone: "UTC",

@@ -74,6 +74,44 @@ const CREATE_STATEMENTS: string[] = [
       detail     JSONB,
       created_at TIMESTAMPTZ NOT NULL DEFAULT now()
    )`,
+  // ── Activity outreach ──
+  // One row per Olum user we've seen in the live feed: what their activity
+  // looked like the last time we drafted for them, and when we last emailed.
+  `CREATE TABLE IF NOT EXISTS activity_users (
+      user_id          TEXT PRIMARY KEY,
+      email            TEXT NOT NULL,
+      last_fingerprint TEXT,
+      last_drafted_at  TIMESTAMPTZ,
+      last_emailed_at  TIMESTAMPTZ,
+      first_seen_at    TIMESTAMPTZ NOT NULL DEFAULT now()
+   )`,
+  // A personalised email waiting for (or past) a human decision. Subject/body
+  // are the exact text the approver sees and edits; approval queues it as a
+  // recipient of that day's "Activity outreach" campaign (recipient_id).
+  `CREATE TABLE IF NOT EXISTS activity_drafts (
+      id           SERIAL PRIMARY KEY,
+      user_id      TEXT NOT NULL,
+      email        TEXT NOT NULL,
+      name         TEXT,
+      site         TEXT,
+      kind         TEXT NOT NULL,
+      fingerprint  TEXT NOT NULL,
+      activity     JSONB,
+      subject      TEXT NOT NULL,
+      body         TEXT NOT NULL,
+      sender_key   TEXT NOT NULL,
+      status       TEXT NOT NULL DEFAULT 'pending',
+      recipient_id INTEGER,
+      error        TEXT,
+      created_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
+      decided_at   TIMESTAMPTZ
+   )`,
+  `CREATE INDEX IF NOT EXISTS idx_activity_drafts_status ON activity_drafts (status, created_at DESC)`,
+  `CREATE TABLE IF NOT EXISTS kv (
+      key        TEXT PRIMARY KEY,
+      value      TEXT,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+   )`,
   `CREATE INDEX IF NOT EXISTS idx_recipients_due ON recipients (status, next_send_at)`,
   `CREATE INDEX IF NOT EXISTS idx_sent_emails_sent_at ON sent_emails (sent_at DESC)`,
 ];
