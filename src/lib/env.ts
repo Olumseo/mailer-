@@ -219,6 +219,50 @@ export const NOTIFY_EMAIL = () =>
 export const NOTIFY_SENDER = () => (opt("NOTIFY_SENDER", "1") as SenderKey);
 export const MAX_SENDS_PER_TICK = () => num("MAX_SENDS_PER_TICK", 4);
 
+// ─── Activity outreach (live users feed → drafts → approval → send) ──
+
+export interface ActivityConfig {
+  /** Master switch. Off => the cron step does nothing at all. */
+  enabled: boolean;
+  /** olum-backend GET /api/v1/auth/outreach/users */
+  feedUrl: string;
+  /** Sent as X-Outreach-Key; must equal the backend's OUTREACH_FEED_KEY. */
+  feedKey: string;
+  /** Mailbox the approved emails go out from (users know who they signed up with). */
+  senderKey: SenderKey;
+  /** Who is told that drafts are waiting. */
+  approverEmail: string;
+  /** This app's public URL, for the "review drafts" link in the approver email. */
+  appUrl: string;
+  /** Olum dashboard link put in the "your site has been analysed" email. */
+  dashboardUrl: string;
+  syncMinutes: number;
+  cooldownDays: number;
+  newUserDays: number;
+  settleMinutes: number;
+  /** First sync drafts for everyone (true) or only records a baseline (false). */
+  backfill: boolean;
+}
+
+export function getActivityConfig(): ActivityConfig {
+  const keys = getSenderKeys();
+  const explicit = opt("ACTIVITY_SENDER");
+  return {
+    enabled: opt("ACTIVITY_OUTREACH_ENABLED", "false") === "true",
+    feedUrl: opt("OLUM_FEED_URL").trim(),
+    feedKey: opt("OLUM_FEED_KEY").trim(),
+    senderKey: explicit && keys.includes(explicit) ? explicit : getReportSenderKey(),
+    approverEmail: opt("APPROVER_EMAIL").trim() || NOTIFY_EMAIL(),
+    appUrl: opt("APP_URL").trim().replace(/\/+$/, ""),
+    dashboardUrl: opt("OLUM_DASHBOARD_URL", "https://olum.ai/app/overview").trim(),
+    syncMinutes: Math.max(1, num("ACTIVITY_SYNC_MINUTES", 15)),
+    cooldownDays: Math.max(1, num("ACTIVITY_COOLDOWN_DAYS", 14)),
+    newUserDays: Math.max(1, num("ACTIVITY_NEW_USER_DAYS", 14)),
+    settleMinutes: Math.max(0, num("ACTIVITY_SETTLE_MINUTES", 120)),
+    backfill: opt("ACTIVITY_BACKFILL", "false") === "true",
+  };
+}
+
 /** Strip credentials out of text before it goes into an HTTP response.
  *  Driver errors love to quote the connection string back at you, and cron
  *  responses are read by a third-party scheduler's log viewer. */
@@ -231,6 +275,7 @@ export function redactSecrets(text: string): string {
     "CRON_SECRET",
     "ACCESS_PASSWORD",
     "GOOGLE_CLIENT_SECRET",
+    "OLUM_FEED_KEY",
   ]) {
     const v = process.env[name];
     if (v && v.length >= 8) out = out.split(v).join(`<${name}>`);

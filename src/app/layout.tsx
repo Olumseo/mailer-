@@ -17,6 +17,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             <Link href="/">Dashboard</Link>
             <Link href="/campaigns/new">New campaign</Link>
             <Link href="/campaigns/report">User feedback</Link>
+            <Link href="/approvals">Approvals</Link>
             <Link href="/sent">Sent</Link>
             <Link href="/meetings">Meetings</Link>
             <span className="spacer" />

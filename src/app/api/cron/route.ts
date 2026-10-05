@@ -6,6 +6,7 @@ import {
   pollReplies,
   processMeetingReminders,
 } from "@/lib/engine";
+import { syncActivity } from "@/lib/activity";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -34,6 +35,13 @@ async function tick(req: NextRequest) {
     results.sends = await processDueSends();
   } catch (e) {
     results.sends = { error: redactSecrets((e as Error).message) };
+  }
+  try {
+    // Live users feed → approval drafts. Self-throttled (ACTIVITY_SYNC_MINUTES)
+    // and a no-op unless ACTIVITY_OUTREACH_ENABLED=true.
+    results.activity = await syncActivity();
+  } catch (e) {
+    results.activity = { error: redactSecrets((e as Error).message) };
   }
   try {
     results.replies = await pollReplies();

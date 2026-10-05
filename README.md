@@ -200,6 +200,55 @@ the same atomic claim, so they can even run at the same time without double-send
 4. **Meetings** → log a booking; reminders fire on each tick.
 5. Replies to any sender mailbox auto-notify Barath within one tick.
 
+## Activity outreach (live users feed + approvals)
+
+Writes to Olum users automatically, based on what they actually did in the product, and
+**never sends anything without a person approving it**.
+
+```
+cron tick ─▶ GET olum-backend /api/v1/auth/outreach/users   (X-Outreach-Key)
+          ─▶ new activity per user?  ─▶ draft  ─▶ email APPROVER_EMAIL "N drafts waiting"
+/approvals ─▶ edit / Approve / Reject ─▶ approved draft is queued on that day's
+              "Activity outreach · YYYY-MM-DD" campaign ─▶ sent by the normal tick
+```
+
+**Which letter.** A *new* user (signed up within `ACTIVITY_NEW_USER_DAYS`, never emailed by
+any campaign) gets **"your site has been analysed"** once their first analysis finishes — with
+their site and a link to the dashboard. Until that analysis finishes they're left alone.
+Everyone else gets the letter for their funnel segment (saw the dashboard / ran an analysis but
+never saw results / analysis stuck / analysis failed / signed up and never ran anything) — the
+same per-segment copy as the users-report campaign, filled with their own sites, run counts and
+errors.
+
+**When.** A draft is only created when a user's activity *changes* (segment, run counts, sites,
+dashboard landing), and never:
+- within `ACTIVITY_COOLDOWN_DAYS` of any email we sent them (any campaign),
+- while they're mid-session (`ACTIVITY_SETTLE_MINUTES` since their last activity),
+- for internal, disposable-domain or team-test accounts.
+
+A newer change replaces a still-pending draft (shown as *replaced*). A rejected draft is not
+re-created for the same activity.
+
+**First run.** With `ACTIVITY_BACKFILL=false` (default) the first sync only records everyone's
+current state and drafts nothing, so switching this on doesn't dump hundreds of letters about
+old activity on the approver. From then on, only new activity is drafted.
+
+**Approving.** `/approvals` shows each draft with the user's activity, the exact subject and
+body (editable), and *Approve & send* / *Save edits* / *Reject*, plus *Approve all*. Approved
+emails go out from `ACTIVITY_SENDER` with the usual jitter, business hours, footer and
+List-Unsubscribe header; they appear on **Sent**, and replies are detected like any campaign.
+
+**Setup.**
+1. Backend: set `OUTREACH_FEED_KEY` (a long random string) in authservice's env and restart.
+   The feed is off (503) until it's set.
+2. Here: `ACTIVITY_OUTREACH_ENABLED=true`, `OLUM_FEED_URL`, `OLUM_FEED_KEY` (same value),
+   `APPROVER_EMAIL`, `APP_URL`. See `.env.example`.
+3. The tables create themselves on first use (or run `/api/setup`).
+
+```bash
+npm run activity:selftest   # decision rules + full draft/approve round-trip, in memory, sends nothing
+```
+
 ## Product-feedback campaigns
 
 A second campaign type, at **/campaigns/report**, for writing to people who are *already users*
