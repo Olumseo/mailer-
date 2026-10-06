@@ -31,7 +31,7 @@ async function main() {
   const { buildRows, selectRecipients, emptyCopy, renderFor } = await import(
     "../src/lib/report-campaign"
   );
-  const { renderTemplate } = await import("../src/lib/template");
+  const { composeEmail } = await import("../src/lib/template");
   const { getSender, getReportSenderKey, getInternalDomains, getTeamEmailHints } =
     await import("../src/lib/env");
 
@@ -108,11 +108,13 @@ async function main() {
   let mismatches = 0;
   for (const r of claimed) {
     const user = chosen.find((u) => u.email === r.email)!;
-    const fromDb = renderTemplate(r.body_override!, {
+    const fromDb = composeEmail({
+      subject: r.subject_override ?? "",
+      body: r.body_override!,
       company: r.name,
       sender,
       extra: r.vars ?? undefined,
-    });
+    }).text;
     const direct = renderFor(user, cfg, sender).body;
     // Spintax differs per render, so compare the parts that must be identical.
     const strip = (s: string) => s.replace(/\s+/g, " ");

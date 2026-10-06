@@ -28,7 +28,7 @@ import {
 } from "./env";
 import { userFromFeed, type FeedUser, type ReportUser } from "./report";
 import { buildActivityVars, copyForKind, kindLabel, type DraftKind } from "./activity-templates";
-import { renderTemplate, textToHtml } from "./template";
+import { renderBody, renderTemplate, textToHtml } from "./template";
 import { computeSchedule } from "./schedule";
 import { sendMail } from "./smtp";
 import type { SenderKey } from "./types";
@@ -105,6 +105,12 @@ export function decideDraft(
     return { action: "skip", reason: "new user, no finished analysis yet" };
   }
 
+  // Seen their results and never asked for a demo: offer a walkthrough of
+  // their own numbers rather than another feedback questionnaire.
+  if (u.segment === "dashboard_seen" && !u.demoRequestedAt) {
+    return { action: "draft", kind: "demo_invite", fingerprint: fp };
+  }
+
   return { action: "draft", kind: u.segment, fingerprint: fp };
 }
 
@@ -138,7 +144,7 @@ export function renderDraft(
   kind: DraftKind,
   senderKey: SenderKey,
   cfg: Pick<ActivityConfig, "dashboardUrl">
-): { subject: string; body: string } {
+): { subject: string; body: string; vars: Record<string, string> } {
   const sender = getSender(senderKey);
   const copy = copyForKind(kind);
   const extra = buildActivityVars(u, {
@@ -148,7 +154,13 @@ export function renderDraft(
     dashboardUrl: cfg.dashboardUrl,
   });
   const vars = { company: u.name || u.email, sender, extra };
-  return { subject: renderTemplate(copy.subject, vars), body: renderTemplate(copy.body, vars) };
+  // Blocks ({{activityCard}}, {{demoButton}}…) stay as placeholders so the
+  // approver edits readable HTML; `extra` rides along to fill them later.
+  return {
+    subject: renderTemplate(copy.subject, vars),
+    body: renderBody(copy.body, vars, "random", { keepBlocks: true }),
+    vars: extra,
+  };
 }
 
 // ─── Feed ────────────────────────────────────────────────────────────
@@ -275,7 +287,7 @@ export async function syncActivity(
       continue;
     }
 
-    const { subject, body } = renderDraft(u, decision.kind, cfg.senderKey, cfg);
+    const { subject, body, vars } = renderDraft(u, decision.kind, cfg.senderKey, cfg);
     const oldId = pending.get(f.id);
     if (oldId) {
       // Their activity moved on before anyone decided — the old letter is stale.
@@ -296,13 +308,17 @@ export async function syncActivity(
       uiIssueEvents: u.uiIssueEvents,
       apiErrorCalls: u.apiErrorCalls,
       plan: u.plan,
+      landingPage: u.landingPage,
+      landingSource: u.landingSource,
+      pagesReached: u.pagesReached,
+      demoRequestedAt: u.demoRequestedAt,
     };
     await sql`
       INSERT INTO activity_drafts (user_id, email, name, site, kind, fingerprint, activity,
-                                   subject, body, sender_key, status)
+                                   subject, body, vars, sender_key, status)
       VALUES (${f.id}, ${u.email}, ${u.name || null}, ${u.primarySite || null}, ${decision.kind},
               ${decision.fingerprint}, ${JSON.stringify(activity)}::jsonb, ${subject}, ${body},
-              ${cfg.senderKey}, 'pending')`;
+              ${JSON.stringify(vars)}::jsonb, ${cfg.senderKey}, 'pending')`;
     await sql`
       INSERT INTO activity_users (user_id, email, last_fingerprint, last_drafted_at)
       VALUES (${f.id}, ${u.email}, ${decision.fingerprint}, now())
@@ -407,7 +423,7 @@ export async function approveDrafts(ids: number[]): Promise<{ approved: number; 
   const drafts = (await sql`
     UPDATE activity_drafts SET status = 'approving'
     WHERE id = ANY(${ids}::int[]) AND status = 'pending'
-    RETURNING id, user_id, email, name, site, kind, subject, body, sender_key`) as {
+    RETURNING id, user_id, email, name, site, kind, subject, body, vars, sender_key`) as {
     id: number;
     user_id: string;
     email: string;
@@ -416,6 +432,7 @@ export async function approveDrafts(ids: number[]): Promise<{ approved: number; 
     kind: string;
     subject: string;
     body: string;
+    vars: Record<string, string> | null;
     sender_key: SenderKey;
   }[];
   if (!drafts.length) return { approved: 0, failed: 0 };
@@ -443,9 +460,10 @@ export async function approveDrafts(ids: number[]): Promise<{ approved: number; 
       const d = group[i];
       const rows = (await withSchema(() => sql`
         INSERT INTO recipients (campaign_id, name, email, website, service, sender_key, segment,
-                                subject_override, body_override, status, next_send_at)
+                                subject_override, body_override, vars, status, next_send_at)
         VALUES (${campaignId}, ${d.name || d.email}, ${d.email}, ${d.site}, ${d.kind}, ${senderKey},
-                ${d.kind}, ${d.subject}, ${d.body}, 'scheduled', ${times[i].toISOString()})
+                ${d.kind}, ${d.subject}, ${d.body}, ${d.vars ? JSON.stringify(d.vars) : null}::jsonb,
+                'scheduled', ${times[i].toISOString()})
         ON CONFLICT (campaign_id, email) DO NOTHING
         RETURNING id`)) as { id: number }[];
       if (!rows.length) {

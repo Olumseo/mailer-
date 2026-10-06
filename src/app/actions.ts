@@ -17,10 +17,9 @@ import {
   getSenderKeys,
   getReportSenderKey,
   getFounderName,
-  getInternalDomains,
-  getTeamEmailHints,
 } from "@/lib/env";
-import { parseUsersReport, SEGMENT_ORDER } from "@/lib/report";
+import { SEGMENT_ORDER } from "@/lib/report";
+import { loadReportUsers, type ReportSource } from "@/lib/report-source";
 import type { Segment } from "@/lib/report";
 import { buildRows, selectRecipients, emptyCopy } from "@/lib/report-campaign";
 import type { ReportCampaignConfig } from "@/lib/report-campaign";
@@ -87,9 +86,11 @@ export async function createCampaignAction(formData: FormData): Promise<void> {
  */
 export async function createReportCampaignAction(formData: FormData): Promise<void> {
   const name = String(formData.get("name") ?? "").trim();
+  const source: ReportSource = formData.get("source") === "xlsx" ? "xlsx" : "feed";
   const file = formData.get("file") as File | null;
-  if (!name || !file || file.size === 0) {
-    throw new Error("Campaign name and the report file are both required.");
+  if (!name) throw new Error("Give the campaign a name.");
+  if (source === "xlsx" && (!file || file.size === 0)) {
+    throw new Error("Choose the users report file, or switch to the live users feed.");
   }
 
   const senderKey = (String(formData.get("senderKey") ?? "").trim() ||
@@ -133,10 +134,7 @@ export async function createReportCampaignAction(formData: FormData): Promise<vo
     copy,
   };
 
-  const parsed = await parseUsersReport(await file.arrayBuffer(), {
-    internalDomains: getInternalDomains(),
-    teamHints: getTeamEmailHints(),
-  });
+  const parsed = await loadReportUsers(source, file);
 
   // Re-apply the segment filter even to an explicit allow-list, so unticking a
   // whole segment can't be defeated by stale checkboxes left in the form.
@@ -152,7 +150,7 @@ export async function createReportCampaignAction(formData: FormData): Promise<vo
     // Campaign-level copy is only a fallback — every recipient carries its own.
     subject: copy[segments[0]].subject,
     bodyTemplate: copy[segments[0]].body,
-    sourceFile: file.name,
+    sourceFile: source === "xlsx" && file ? file.name : "Live users feed",
     rows: buildRows(chosen, cfg, sender),
     duplicatesRemoved: parsed.duplicates,
     senderKey,

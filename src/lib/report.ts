@@ -41,6 +41,16 @@ export interface ReportUser {
   apiErrorCalls: number;
   authProvider: string;
   notes: string;
+  /** Which page they signed up through (home, ppc-landing-1…), when recorded. */
+  landingPage: string;
+  /** Campaign/source tag that page carried (utm source etc.). */
+  landingSource: string;
+  /** Last app route they were on, e.g. /app/overview. */
+  lastRoute: string;
+  /** App sections they have opened at least once, oldest first. */
+  pagesReached: string[];
+  /** When they asked for a demo through the site ("" = never). */
+  demoRequestedAt: string;
 
   // ─ derived ─
   segment: Segment;
@@ -75,6 +85,8 @@ const H = {
   apiErrors: ["api error calls", "api errors"],
   auth: ["auth provider"],
   notes: ["notes"],
+  landingPage: ["landing page", "signup landing page"],
+  landingSource: ["landing source", "signup source"],
 } as const;
 
 function lower(row: Record<string, unknown>): Map<string, unknown> {
@@ -268,6 +280,11 @@ function toUser(row: Record<string, unknown>, cfg: ExcludeConfig): ReportUser | 
     apiErrorCalls,
     authProvider: str(m, H.auth),
     notes,
+    landingPage: str(m, H.landingPage),
+    landingSource: str(m, H.landingSource),
+    lastRoute: "",
+    pagesReached: [],
+    demoRequestedAt: "",
 
     segment: classifySegment(base),
     primarySite: sitesAnalysed[0] ?? sitesCrawled[0] ?? "",
@@ -373,6 +390,14 @@ export interface FeedUser {
   ui_issue_events: number;
   issue_kinds: string;
   api_error_calls: number;
+  // Added with the landing-page / journey follow-up — optional so the mailer
+  // keeps working against a backend that doesn't send them yet.
+  signup_landing_page?: string | null;
+  signup_source?: string | null;
+  signup_landing_at?: string | null;
+  last_route?: string | null;
+  pages_reached?: string[] | null;
+  demo_requested_at?: string | null;
 }
 
 export function userFromFeed(f: FeedUser, cfg: ExcludeConfig): ReportUser {
@@ -407,6 +432,11 @@ export function userFromFeed(f: FeedUser, cfg: ExcludeConfig): ReportUser {
     apiErrorCalls,
     authProvider: f.auth_provider || "",
     notes: "",
+    landingPage: f.signup_landing_page || "",
+    landingSource: f.signup_source || "",
+    lastRoute: f.last_route || "",
+    pagesReached: Array.isArray(f.pages_reached) ? f.pages_reached.filter(Boolean) : [],
+    demoRequestedAt: f.demo_requested_at || "",
     segment: classifySegment(base),
     primarySite: sitesAnalysed[0] ?? sitesCrawled[0] ?? "",
     highFriction: uiIssueEvents > 0 || base.analysesFailed > 0 || apiErrorCalls >= 20,

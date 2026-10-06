@@ -16,6 +16,7 @@ process.env.SNAPSHOT_PATH = "no-such-snapshot-for-activity-selftest.json";
 process.env.SENDER_EMAIL_1 = "barath@example.test";
 process.env.SENDER_NAME_1 = "Barath";
 process.env.SENDER_TITLE_1 = "Founder, Olum";
+process.env.BOOKING_LINK_1 = "https://cal.example.test/barath";
 process.env.REPORT_SENDER = "1";
 process.env.INTERNAL_DOMAINS = "olum.ai";
 process.env.ACTIVITY_OUTREACH_ENABLED = "true";
@@ -84,7 +85,10 @@ async function main() {
   check(d.action === "skip" && /new user/.test(d.reason), "new user without analysis → wait", JSON.stringify(d));
 
   d = decide(feedUser({ signed_up_at: ago(60 * DAY), landed_dashboard: true }));
-  check(d.action === "draft" && d.kind === "dashboard_seen", "existing user who saw dashboard → dashboard_seen letter", JSON.stringify(d));
+  check(d.action === "draft" && d.kind === "demo_invite", "existing user who saw dashboard, no demo asked → demo_invite", JSON.stringify(d));
+
+  d = decide(feedUser({ signed_up_at: ago(60 * DAY), landed_dashboard: true, demo_requested_at: ago(2 * DAY) }));
+  check(d.action === "draft" && d.kind === "dashboard_seen", "saw dashboard and already asked for a demo → dashboard_seen letter", JSON.stringify(d));
 
   d = decide(feedUser({ signed_up_at: ago(60 * DAY), analyses_completed: 0, analyses_failed: 2, workflow_state: "failed" }));
   check(d.action === "draft" && d.kind === "analysis_failed", "existing user with failed runs → analysis_failed letter", JSON.stringify(d));
@@ -109,13 +113,36 @@ async function main() {
   check(d.action === "draft" && d.kind !== "site_analysed", "already emailed before → never the 'new user' letter again", JSON.stringify(d));
 
   console.log("\n— rendering —");
-  for (const kind of ["site_analysed", "dashboard_seen", "results_not_seen", "analysis_stuck", "analysis_failed", "signed_up_only"] as const) {
-    const r = act.renderDraft(userFromFeed(feedUser() as unknown as F, ex), kind, "1", { dashboardUrl: "https://olum.ai/app/overview" });
-    const leftovers = /\{\{|\}\}|\{[^{}]*\|[^{}]*\}/.test(r.subject + r.body);
-    check(!leftovers && r.body.startsWith("Hi Jane"), `${kind}: clean render`, leftovers ? r.body.slice(0, 120) : r.subject);
+  const { composeEmail, BLOCK_NAMES } = await import("../src/lib/template");
+  const journeyUser = userFromFeed(
+    feedUser({ signup_landing_page: "ppc-landing-2", signup_source: "google", pages_reached: ["/app/overview", "/app/ai-visibility"] }) as unknown as F,
+    ex
+  );
+  const sender = { displayName: "Barath", title: "Founder, Olum", bookingLink: "https://cal.example.test/barath" };
+  const sendAs = (r: { subject: string; body: string; vars: Record<string, string> }) =>
+    composeEmail({ subject: r.subject, body: r.body, company: "Jane Smith", sender, extra: r.vars });
+  for (const kind of ["site_analysed", "demo_invite", "dashboard_seen", "results_not_seen", "analysis_stuck", "analysis_failed", "signed_up_only"] as const) {
+    const r = act.renderDraft(journeyUser, kind, "1", { dashboardUrl: "https://olum.ai/app/overview" });
+    // The draft keeps only known blocks as placeholders — nothing else unresolved.
+    const stray = (r.body.match(/\{\{\s*(\w+)\s*\}\}/g) ?? []).filter(
+      (m) => !(BLOCK_NAMES as readonly string[]).includes(m.replace(/[{}\s]/g, ""))
+    );
+    const sent = sendAs(r);
+    const leftovers = /\{\{|\}\}|\{[^{}]*\|[^{}]*\}/.test(sent.subject + sent.text);
+    check(!stray.length && !leftovers && sent.text.startsWith("Hi Jane"), `${kind}: clean render`, stray.join(",") || (leftovers ? sent.text.slice(0, 120) : r.subject));
   }
+  const di = act.renderDraft(journeyUser, "demo_invite", "1", { dashboardUrl: "https://olum.ai/app/overview" });
+  check(di.body.includes("{{activityCard}}") && di.body.includes("{{demoButton}}"), "demo_invite draft keeps readable block placeholders");
+  const diSent = sendAs(di);
+  check(
+    diSent.html.includes("Landing page 2 (google)") && diSent.html.includes("AI visibility") && diSent.html.includes("Your activity on Olum"),
+    "sent demo_invite expands the activity card: landing page and sections visited"
+  );
+  check(diSent.html.includes("https://cal.example.test/barath"), "sent demo_invite carries the booking link button");
+  check(!/<p[^>]*>\s*<\/p>/.test(diSent.html), "no empty paragraphs left by blank placeholders");
   const sa = act.renderDraft(userFromFeed(feedUser() as unknown as F, ex), "site_analysed", "1", { dashboardUrl: "https://olum.ai/app/overview" });
-  check(sa.body.includes("https://olum.ai/app/overview") && sa.body.includes("acme.com"), "site_analysed names the site and links the dashboard");
+  const saSent = sendAs(sa);
+  check(saSent.html.includes("https://olum.ai/app/overview") && saSent.text.includes("acme.com"), "site_analysed names the site and links the dashboard");
 
   console.log("\n— DB round-trip (in-memory Postgres, faked feed) —");
   await ensureSchema();

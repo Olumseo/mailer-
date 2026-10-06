@@ -215,10 +215,12 @@ cron tick ─▶ GET olum-backend /api/v1/auth/outreach/users   (X-Outreach-Key)
 **Which letter.** A *new* user (signed up within `ACTIVITY_NEW_USER_DAYS`, never emailed by
 any campaign) gets **"your site has been analysed"** once their first analysis finishes — with
 their site and a link to the dashboard. Until that analysis finishes they're left alone.
-Everyone else gets the letter for their funnel segment (saw the dashboard / ran an analysis but
-never saw results / analysis stuck / analysis failed / signed up and never ran anything) — the
-same per-segment copy as the users-report campaign, filled with their own sites, run counts and
-errors.
+Someone who has **seen their results but never asked for a demo** (no row in the backend's
+demo requests for their email) gets the **demo invite**: their activity recapped in a card and a
+"Book a demo" button. Everyone else gets the letter for their funnel segment (saw the dashboard /
+ran an analysis but never saw results / analysis stuck / analysis failed / signed up and never
+ran anything) — the same per-segment copy as the users-feedback campaign, filled with their own
+sites, run counts, landing page, the app sections they opened, and errors.
 
 **When.** A draft is only created when a user's activity *changes* (segment, run counts, sites,
 dashboard landing), and never:
@@ -233,8 +235,10 @@ re-created for the same activity.
 current state and drafts nothing, so switching this on doesn't dump hundreds of letters about
 old activity on the approver. From then on, only new activity is drafted.
 
-**Approving.** `/approvals` shows each draft with the user's activity, the exact subject and
-body (editable), and *Approve & send* / *Save edits* / *Reject*, plus *Approve all*. Approved
+**Approving.** `/approvals` shows each draft with the user's activity, the subject, and the
+body in the code | preview editor (blocks like `{{activityCard}}` stay as placeholders in the code
+and are filled from the user's data in the preview and at send), and *Approve & send* / *Save
+edits* / *Reject*, plus *Approve all*. Approved
 emails go out from `ACTIVITY_SENDER` with the usual jitter, business hours, footer and
 List-Unsubscribe header; they appear on **Sent**, and replies are detected like any campaign.
 
@@ -249,12 +253,42 @@ List-Unsubscribe header; they appear on **Sent**, and replies are detected like 
 npm run activity:selftest   # decision rules + full draft/approve round-trip, in memory, sends nothing
 ```
 
+## Email design (every message)
+
+Every email — cold campaigns, user feedback, activity drafts, meeting reminders, team
+notifications — goes out in one branded layout matching olum.ai's own emails: cream page, white
+card with a coral top rule, italic serif **Olum.** wordmark, ink text, blue buttons, an
+org/unsubscribe footer, plus a plain-text part. It lives in `src/lib/email-html.ts`; one
+function, `composeEmail()` in `src/lib/template.ts`, renders both the send and the editor preview,
+so the preview is exactly what goes out.
+
+Templates are **content HTML**: bare `<p>`, `<a>`, `<ol>`, `<h2>`, `<strong>` — styles are
+stamped on at send time. Spintax `{a|b}` and `{{placeholders}}` work as before (values are
+HTML-escaped). Blocks that expand to finished HTML:
+
+| Block | What it renders |
+|---|---|
+| `{{demoButton}}` | "Book a demo" button → the booking link (dropped when there's none) |
+| `{{callButton}}` | quieter "Grab 15 minutes" button → the booking link |
+| `{{dashboardButton}}` | "Open your dashboard" button (activity emails) |
+| `{{activityCard}}` | the user's activity: site, signup date, landing page they came in through, runs, pages crawled, dashboard reached, sections opened, last active |
+| `{{signature}}` | sender name and title |
+
+Plain-text templates (campaigns created before this) still work — they're turned into
+paragraphs in the same layout. The **editor** (new/edit campaign, user feedback, approvals) is
+split like GitHub: HTML on the left with line numbers and one-click blocks, the email on the
+right with desktop/mobile widths and *Shuffle* to see another spintax variant. **Sent** shows each
+email exactly as it was rendered.
+
 ## Product-feedback campaigns
 
-A second campaign type, at **/campaigns/report**, for writing to people who are *already users*
-rather than to a cold list. It takes the `Olum_Prod_Users_Report.xlsx` the product exports
-(Name, Email, Landed dashboard, Workflow state, Sites analysed, UI issue events…) — a completely
-different shape from a lead list, so it has its own parser.
+A second campaign type, at **/campaigns/report** ("User feedback" in the nav), for writing to
+people who are *already users* rather than to a cold list. By default it reads them **live from
+the backend feed** (`OLUM_FEED_URL` / `OLUM_FEED_KEY`, the same feed as activity outreach) — who
+signed up, which landing page they came in through, what they ran, which sections they opened,
+whether they've asked for a demo. You can still upload the `Olum_Prod_Users_Report.xlsx` the
+product exports instead (Name, Email, Landed dashboard, Workflow state, Sites analysed, UI issue
+events…); both produce the same rows.
 
 **Segmentation.** Each user is placed in one of five buckets from their own telemetry:
 

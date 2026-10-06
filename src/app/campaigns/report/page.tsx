@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { getAllSenders, getReportSenderKey, getFounderName, getSender } from "@/lib/env";
+import { feedConfigured } from "@/lib/report-source";
 import { ReportForm } from "./ReportForm";
 
 export const dynamic = "force-dynamic";
@@ -17,12 +18,13 @@ export default function ReportCampaignPage() {
       <p className="hint">
         <Link href="/">← Dashboard</Link>
       </p>
-      <h1>Product feedback campaign</h1>
+      <h1>User feedback &amp; demo campaign</h1>
       <p className="sub">
-        Upload the users report the app generates, and write to the people already in it. Everyone
-        is placed in a funnel segment — signed up and stalled, analysis failed, ran it but never
-        reached the dashboard, or got all the way through — and each segment gets its own letter
-        asking for feedback and offering a call with the founder.
+        Write to the people already using Olum, straight from their live activity: who signed up,
+        which landing page they came in through, what they ran, which sections they opened and
+        whether they reached their results. Everyone lands in a funnel segment, and each segment
+        gets its own branded letter asking for feedback with a &ldquo;Book a demo&rdquo; button.
+        For one-by-one drafts as activity happens, see <Link href="/approvals">Approvals</Link>.
       </p>
 
       <ReportForm
@@ -30,6 +32,7 @@ export default function ReportCampaignPage() {
         defaultSenderKey={defaultSenderKey}
         defaultFounderName={getFounderName()}
         defaultBookingLink={getSender(defaultSenderKey).bookingLink}
+        feedReady={feedConfigured()}
       />
     </div>
   );
