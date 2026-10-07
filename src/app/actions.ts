@@ -25,6 +25,7 @@ import { buildRows, selectRecipients, emptyCopy } from "@/lib/report-campaign";
 import type { ReportCampaignConfig } from "@/lib/report-campaign";
 import type { SenderKey } from "@/lib/types";
 import { approveDrafts, rejectDrafts, saveDraftEdit, syncActivity } from "@/lib/activity";
+import { saveWelcomeCopy } from "@/lib/welcome";
 
 /** Interpret a `datetime-local` value ("2026-07-25T14:30") as IST wall-clock
  *  time and return the real UTC instant. */
@@ -327,4 +328,19 @@ export async function saveDraftAction(formData: FormData): Promise<void> {
 export async function syncActivityNowAction(): Promise<void> {
   await syncActivity({ force: true });
   revalidatePath("/approvals");
+}
+
+// ─── Login welcome ───────────────────────────────────────────────────
+
+export async function saveWelcomeCopyAction(formData: FormData): Promise<void> {
+  const subject = String(formData.get("subject") ?? "").trim();
+  const body = String(formData.get("body") ?? "").trim();
+  if (!subject || !body) throw new Error("Subject and body can't be empty.");
+  await saveWelcomeCopy({ subject, body });
+  revalidatePath("/welcome");
+}
+
+export async function resetWelcomeCopyAction(): Promise<void> {
+  await saveWelcomeCopy(null);
+  revalidatePath("/welcome");
 }
