@@ -8,6 +8,7 @@ const LINKS = [
   { href: "/campaigns/new", label: "New campaign" },
   { href: "/campaigns/report", label: "User feedback" },
   { href: "/approvals", label: "Approvals" },
+  { href: "/welcome", label: "Login welcome" },
   { href: "/sent", label: "Sent" },
   { href: "/meetings", label: "Meetings" },
 ];

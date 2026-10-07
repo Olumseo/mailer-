@@ -253,6 +253,36 @@ List-Unsubscribe header; they appear on **Sent**, and replies are detected like 
 npm run activity:selftest   # decision rules + full draft/approve round-trip, in memory, sends nothing
 ```
 
+## Login welcome (first sign-in → one email from the founder)
+
+The first time anyone signs in to Olum, they get one short, personal email from Rohan: they're
+in, and if anything is unclear or they'd like a walkthrough of how to get the most out of Olum,
+here's a **Book a demo** button. Automatic — no approval step — and **once per person, ever**.
+
+```
+olum-backend: any successful sign-in (password, OTP, Google, Firebase)
+   └─ fire-and-forget POST <APP_URL>/api/hooks/login   (X-Outreach-Key)
+this app: first time we've seen this user?  ─▶ send from LOGIN_WELCOME_SENDER now
+   └─ recipient of the "Login welcome" campaign (replies detected) + Sent log
+```
+
+- Skips internal domains, team-test addresses and disposable signups, and anyone already
+  welcomed — even under a second account with the same address.
+- A failed send is retried on the person's next sign-in; after one success, never again.
+- The backend's call can never slow down or break a sign-in (short timeout, errors swallowed).
+- **/welcome** edits the email in the code | preview editor (saved in the database — no deploy),
+  and lists recent sign-ins with sent / skipped / failed.
+
+**Setup.**
+1. Backend (authservice): `OUTREACH_LOGIN_HOOK_URL=<APP_URL>/api/hooks/login`, plus the same
+   `OUTREACH_FEED_KEY` as the users feed.
+2. Here: `LOGIN_WELCOME_ENABLED=true`, `LOGIN_WELCOME_SENDER=<Rohan's sender slot>` (with a
+   `BOOKING_LINK_N` for the demo button), and `OLUM_FEED_KEY` matching the backend.
+
+```bash
+npm run welcome:selftest   # once-per-user, skips, retry, edited copy — in memory, sends nothing
+```
+
 ## Email design (every message)
 
 Every email — cold campaigns, user feedback, activity drafts, meeting reminders, team

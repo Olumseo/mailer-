@@ -107,6 +107,22 @@ const CREATE_STATEMENTS: string[] = [
       decided_at   TIMESTAMPTZ
    )`,
   `CREATE INDEX IF NOT EXISTS idx_activity_drafts_status ON activity_drafts (status, created_at DESC)`,
+  // ── Login welcome ──
+  // One row per Olum user the backend reported signing in: the founder's
+  // one-time welcome is sent at most once per user (and per address).
+  `CREATE TABLE IF NOT EXISTS login_welcomes (
+      user_id      TEXT PRIMARY KEY,
+      email        TEXT NOT NULL,
+      name         TEXT,
+      status       TEXT NOT NULL,
+      reason       TEXT,
+      recipient_id INTEGER,
+      logins       INTEGER NOT NULL DEFAULT 1,
+      created_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
+      sent_at      TIMESTAMPTZ,
+      last_login_at TIMESTAMPTZ NOT NULL DEFAULT now()
+   )`,
+  `CREATE INDEX IF NOT EXISTS idx_login_welcomes_created ON login_welcomes (created_at DESC)`,
   `CREATE TABLE IF NOT EXISTS kv (
       key        TEXT PRIMARY KEY,
       value      TEXT,
@@ -192,7 +208,7 @@ async function initSnapshotDb() {
   const snap = JSON.parse(fs.readFileSync(file, "utf8")) as Record<string, Row[]>;
   const tables = [
     "campaigns", "recipients", "meetings", "sent_emails", "mailbox_state", "events",
-    "activity_users", "activity_drafts", "kv",
+    "activity_users", "activity_drafts", "kv", "login_welcomes",
   ];
   let loaded = 0;
   for (const table of tables) {
