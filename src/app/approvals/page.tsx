@@ -3,6 +3,9 @@ import { sql, ensureSchemaOnce } from "@/lib/db";
 import { getActivityConfig, getSender } from "@/lib/env";
 import { fmt } from "@/lib/format";
 import { kindLabel } from "@/lib/activity-templates";
+import { landingLabel, sectionLabel } from "@/lib/report-templates";
+import { composeEmail } from "@/lib/template";
+import { EmailEditor } from "@/app/components/EmailEditor";
 import {
   approveDraftsAction,
   rejectDraftsAction,
@@ -30,9 +33,14 @@ interface DraftRow {
     sitesAnalysed?: string[];
     uiIssueEvents?: number;
     plan?: string;
+    landingPage?: string;
+    landingSource?: string;
+    pagesReached?: string[];
+    demoRequestedAt?: string;
   } | null;
   subject: string;
   body: string;
+  vars: Record<string, string> | null;
   sender_key: string;
   status: string;
   error: string | null;
@@ -51,6 +59,9 @@ function ActivityFacts({ a }: { a: DraftRow["activity"] }) {
     a.analysesFailed ? `${a.analysesFailed} failed` : "",
     a.landedDashboard ? "saw dashboard" : "never reached dashboard",
     a.sitesAnalysed?.length ? `sites: ${a.sitesAnalysed.join(", ")}` : "",
+    a.landingPage ? `came via ${landingLabel(a.landingPage, a.landingSource ?? "")}` : "",
+    a.pagesReached?.length ? `opened ${[...new Set(a.pagesReached.map(sectionLabel))].join(", ")}` : "",
+    a.demoRequestedAt ? `asked for a demo ${fmt(a.demoRequestedAt)}` : "",
     a.uiIssueEvents ? `${a.uiIssueEvents} UI issues` : "",
     a.lastVisited ? `last active ${fmt(a.lastVisited)}` : "",
   ].filter(Boolean);
@@ -79,7 +90,7 @@ export default async function ApprovalsPage({
           ? ["approved", "failed"]
           : ["rejected", "superseded"];
     rows = (await sql`
-      SELECT d.id, d.email, d.name, d.site, d.kind, d.activity, d.subject, d.body, d.sender_key,
+      SELECT d.id, d.email, d.name, d.site, d.kind, d.activity, d.subject, d.body, d.vars, d.sender_key,
              d.status, d.error, d.created_at, d.decided_at,
              r.status AS r_status, r.next_send_at, r.sent_at
       FROM activity_drafts d LEFT JOIN recipients r ON r.id = d.recipient_id
@@ -101,6 +112,10 @@ export default async function ApprovalsPage({
   }
 
   const pendingIds = tab === "pending" ? rows.map((r) => r.id) : [];
+  const senderFor = (key: string) => {
+    const snd = getSender(key);
+    return { displayName: snd.displayName, title: snd.title, bookingLink: snd.bookingLink };
+  };
   const tabLink = (t: Tab, label: string, n: number) => (
     <Link
       href={`/approvals?tab=${t}`}
@@ -123,8 +138,9 @@ export default async function ApprovalsPage({
       </div>
       <p className="sub">
         Emails drafted from what each Olum user did on the frontend. New users whose first
-        analysis finished get the &ldquo;your site has been analysed&rdquo; letter; everyone else
-        gets a letter about their own activity. <strong>Nothing is sent until you approve it</strong>
+        analysis finished get the &ldquo;your site has been analysed&rdquo; letter; people who saw
+        their results but never asked for a demo get a demo invite; everyone else gets a letter
+        about their own activity. Edit the HTML on the left, see the email on the right. <strong>Nothing is sent until you approve it</strong>
         — approved emails go out from {getSender(cfg.senderKey).email} at the usual drip pace.
       </p>
 
@@ -191,10 +207,16 @@ export default async function ApprovalsPage({
               {d.status === "pending" ? (
                 <form>
                   <input type="hidden" name="id" value={d.id} />
-                  <label>Subject</label>
-                  <input name="subject" defaultValue={d.subject} required />
-                  <label>Body (signature and unsubscribe footer are added when it sends)</label>
-                  <textarea name="body" defaultValue={d.body} required />
+                  <EmailEditor
+                    subjectName="subject"
+                    bodyName="body"
+                    defaultSubject={d.subject}
+                    defaultBody={d.body}
+                    sender={senderFor(d.sender_key)}
+                    senderEmail={getSender(d.sender_key).email}
+                    sample={{ company: d.name || d.email, toEmail: d.email, extra: d.vars ?? undefined }}
+                    rows={18}
+                  />
                   <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
                     <button type="submit" formAction={approveDraftsAction}>Approve &amp; send</button>
                     <button type="submit" className="ghost" formAction={saveDraftAction}>Save edits</button>
@@ -204,7 +226,22 @@ export default async function ApprovalsPage({
               ) : (
                 <details style={{ marginTop: 8 }}>
                   <summary style={{ cursor: "pointer", color: "var(--muted)" }}>{d.subject}</summary>
-                  <pre style={{ whiteSpace: "pre-wrap", fontSize: 12, marginTop: 6 }}>{d.body}</pre>
+                  <iframe
+                    title={`Draft for ${d.email}`}
+                    sandbox="allow-same-origin"
+                    loading="lazy"
+                    style={{ width: "100%", height: 560, border: "1px solid var(--border)", borderRadius: 8, marginTop: 8, background: "#F3F1EC" }}
+                    srcDoc={
+                      composeEmail({
+                        subject: d.subject,
+                        body: d.body,
+                        company: d.name || d.email,
+                        sender: senderFor(d.sender_key),
+                        extra: d.vars ?? undefined,
+                        spin: "first",
+                      }).html
+                    }
+                  />
                 </details>
               )}
             </div>

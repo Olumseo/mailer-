@@ -127,6 +127,10 @@ const ALTER_STATEMENTS: string[] = [
   `ALTER TABLE recipients ADD COLUMN IF NOT EXISTS subject_override TEXT`,
   `ALTER TABLE recipients ADD COLUMN IF NOT EXISTS body_override TEXT`,
   `ALTER TABLE recipients ADD COLUMN IF NOT EXISTS vars JSONB`,
+  // The exact branded HTML that went out, so the Sent page can show it.
+  `ALTER TABLE sent_emails ADD COLUMN IF NOT EXISTS html TEXT`,
+  // Activity drafts keep {{activityCard}} etc. as placeholders; these values fill them.
+  `ALTER TABLE activity_drafts ADD COLUMN IF NOT EXISTS vars JSONB`,
 ];
 
 // ─── The `sql` handle: Neon normally, PGlite in snapshot mode ─────────
@@ -186,7 +190,10 @@ async function initSnapshotDb() {
   }
 
   const snap = JSON.parse(fs.readFileSync(file, "utf8")) as Record<string, Row[]>;
-  const tables = ["campaigns", "recipients", "meetings", "sent_emails", "mailbox_state", "events"];
+  const tables = [
+    "campaigns", "recipients", "meetings", "sent_emails", "mailbox_state", "events",
+    "activity_users", "activity_drafts", "kv",
+  ];
   let loaded = 0;
   for (const table of tables) {
     const rows = snap[table];
@@ -307,9 +314,10 @@ export async function recordSentEmail(rec: {
   company: string;
   subject: string;
   body: string;
+  html?: string;
 }): Promise<void> {
   await sql`
-    INSERT INTO sent_emails (campaign_id, recipient_id, sender, to_email, company, subject, body)
+    INSERT INTO sent_emails (campaign_id, recipient_id, sender, to_email, company, subject, body, html)
     VALUES (${rec.campaignId}, ${rec.recipientId ?? null}, ${rec.sender}, ${rec.to},
-            ${rec.company}, ${rec.subject}, ${rec.body})`;
+            ${rec.company}, ${rec.subject}, ${rec.body}, ${rec.html ?? null})`;
 }

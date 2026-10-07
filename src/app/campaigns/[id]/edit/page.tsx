@@ -2,6 +2,8 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { sql } from "@/lib/db";
 import { updateCampaignAction } from "@/app/actions";
+import { getSender, getSenderKeys } from "@/lib/env";
+import { EmailEditor } from "@/app/components/EmailEditor";
 
 export const dynamic = "force-dynamic";
 
@@ -20,6 +22,15 @@ export default async function EditCampaignPage({
   }>;
   if (!c) notFound();
 
+  // Preview as the campaign's first recipient, from the mailbox they're on.
+  const [first] = (await sql`
+    SELECT name, email, sender_key, vars FROM recipients
+    WHERE campaign_id = ${campaignId} ORDER BY id LIMIT 1`) as Array<{
+    name: string; email: string; sender_key: string; vars: Record<string, string> | null;
+  }>;
+  const keys = getSenderKeys();
+  const sender = getSender(first && keys.includes(first.sender_key) ? first.sender_key : keys[0]);
+
   return (
     <div>
       <p className="hint"><Link href={`/campaigns/${c.id}`}>← Campaign</Link></p>
@@ -35,16 +46,21 @@ export default async function EditCampaignPage({
         <label>Campaign name</label>
         <input name="name" defaultValue={c.name} required />
 
-        <label>Subject line</label>
-        <input name="subject" defaultValue={c.subject} required />
-
-        <label>Body template</label>
-        <textarea name="bodyTemplate" defaultValue={c.body_template} required />
-        <div className="mono-note" style={{ marginTop: 8 }}>
-          Placeholders: <code>{"{{company}}"}</code> <code>{"{{senderName}}"}</code>{" "}
-          <code>{"{{senderTitle}}"}</code> <code>{"{{bookingLink}}"}</code>. Spintax{" "}
-          <code>{"{a|b|c}"}</code> varies each email.
-        </div>
+        <label>Email</label>
+        <EmailEditor
+          subjectName="subject"
+          bodyName="bodyTemplate"
+          defaultSubject={c.subject}
+          defaultBody={c.body_template}
+          sender={{ displayName: sender.displayName, title: sender.title, bookingLink: sender.bookingLink }}
+          senderEmail={sender.email}
+          sample={{
+            company: first?.name ?? "Acme Pte Ltd",
+            toEmail: first?.email,
+            extra: first?.vars ?? undefined,
+          }}
+          placeholders={["company", "senderName", "senderTitle", "bookingLink", "demoButton", "signature"]}
+        />
 
         <div className="actions">
           <button type="submit">Save changes</button>

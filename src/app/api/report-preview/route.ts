@@ -1,31 +1,25 @@
 import { NextRequest, NextResponse } from "next/server";
-import { parseUsersReport, summarise, SEGMENT_ORDER } from "@/lib/report";
-import { REPORT_COPY } from "@/lib/report-templates";
-import { defaultIncluded, renderFor, emptyCopy } from "@/lib/report-campaign";
+import { summarise, SEGMENT_ORDER } from "@/lib/report";
+import { REPORT_COPY, sectionLabel, landingLabel } from "@/lib/report-templates";
+import { defaultIncluded, renderFor, emptyCopy, varsFor } from "@/lib/report-campaign";
 import type { ReportCampaignConfig } from "@/lib/report-campaign";
-import {
-  getSender,
-  getReportSenderKey,
-  getFounderName,
-  getInternalDomains,
-  getTeamEmailHints,
-} from "@/lib/env";
+import { loadReportUsers, type ReportSource } from "@/lib/report-source";
+import { getSender, getReportSenderKey, getFounderName } from "@/lib/env";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 /**
- * Reads an uploaded users report and returns everything the review screen
- * needs: the segmented user list, per-segment counts, and one fully rendered
- * sample email per segment. Nothing is written to the DB here.
+ * Loads the users (live feed, or an uploaded report) and returns everything
+ * the review screen needs: the segmented user list, per-segment counts, and
+ * the placeholder values of one real user per segment — the editor renders
+ * the live preview from those as you type. Nothing is written to the DB here.
  * Gated by the access-cookie middleware like the rest of the app.
  */
 export async function POST(req: NextRequest) {
   const form = await req.formData();
+  const source: ReportSource = form.get("source") === "xlsx" ? "xlsx" : "feed";
   const file = form.get("file") as File | null;
-  if (!file || file.size === 0) {
-    return NextResponse.json({ error: "No file provided." }, { status: 400 });
-  }
 
   const senderKey = String(form.get("senderKey") ?? "") || getReportSenderKey();
   const sender = getSender(senderKey);
@@ -33,25 +27,7 @@ export async function POST(req: NextRequest) {
   const founderName = String(form.get("founderName") ?? "").trim() || getFounderName();
 
   try {
-    const parsed = await parseUsersReport(await file.arrayBuffer(), {
-      internalDomains: getInternalDomains(),
-      teamHints: getTeamEmailHints(),
-    });
-
-    // The form posts its edited copy back so previews stay honest after a rewrite.
-    let copy = emptyCopy();
-    const rawCopy = String(form.get("copy") ?? "");
-    if (rawCopy) {
-      try {
-        const edited = JSON.parse(rawCopy) as Record<string, { subject?: string; body?: string }>;
-        for (const seg of SEGMENT_ORDER) {
-          if (edited[seg]?.subject?.trim()) copy[seg].subject = edited[seg].subject!.trim();
-          if (edited[seg]?.body?.trim()) copy[seg].body = edited[seg].body!.trim();
-        }
-      } catch {
-        copy = emptyCopy(); // malformed edit — fall back to the defaults
-      }
-    }
+    const parsed = await loadReportUsers(source, file);
 
     const cfg: ReportCampaignConfig = {
       bookingLink,
@@ -60,27 +36,38 @@ export async function POST(req: NextRequest) {
       includeEmails: null,
       includeTeamHints: false,
       includeInternal: false,
-      copy,
+      copy: emptyCopy(),
     };
 
-    // One rendered sample per segment — taken from a user who'd actually be
-    // mailed, so the placeholders show real values rather than "your site".
-    const samples: Record<string, { subject: string; body: string } | null> = {};
+    // One sample per segment — a user who'd actually be mailed, so the preview
+    // shows real values rather than "your site".
+    const samples: Record<string, { email: string; company: string; extra: Record<string, string> } | null> = {};
     for (const seg of SEGMENT_ORDER) {
       const pick =
         parsed.users.find((u) => u.segment === seg && defaultIncluded(u, cfg)) ??
         parsed.users.find((u) => u.segment === seg);
-      samples[seg] = pick ? renderFor(pick, cfg, sender) : null;
+      samples[seg] = pick
+        ? { email: pick.email, company: pick.name || pick.email, extra: varsFor(pick, cfg, sender) }
+        : null;
     }
 
-    // "Preview this person" — the exact letter one named user would receive.
+    // "Preview this person" — their placeholder values, so the segment editor
+    // can switch its preview to them; plus one rendered copy for a quick look.
     const focusEmail = String(form.get("previewEmail") ?? "").trim().toLowerCase();
     const focusUser = focusEmail ? parsed.users.find((u) => u.email === focusEmail) : undefined;
     const focus = focusUser
-      ? { email: focusUser.email, name: focusUser.name, ...renderFor(focusUser, cfg, sender) }
+      ? {
+          email: focusUser.email,
+          name: focusUser.name,
+          segment: focusUser.segment,
+          company: focusUser.name || focusUser.email,
+          extra: varsFor(focusUser, cfg, sender),
+          ...renderFor(focusUser, cfg, sender),
+        }
       : null;
 
     return NextResponse.json({
+      source,
       focus,
       sheetName: parsed.sheetName,
       duplicates: parsed.duplicates,
@@ -93,7 +80,12 @@ export async function POST(req: NextRequest) {
         subject: REPORT_COPY[s].subject,
         body: REPORT_COPY[s].body,
       })),
-      sender: { key: sender.key, name: sender.displayName, email: sender.email },
+      sender: {
+        key: sender.key,
+        name: sender.displayName,
+        email: sender.email,
+        title: sender.title,
+      },
       samples,
       users: parsed.users.map((u) => ({
         name: u.name,
@@ -111,6 +103,9 @@ export async function POST(req: NextRequest) {
         signedUp: u.signedUp,
         landed: u.landedDashboard,
         workflowState: u.workflowState,
+        cameFrom: landingLabel(u.landingPage, u.landingSource),
+        pages: [...new Set(u.pagesReached.map(sectionLabel).filter(Boolean))],
+        demoRequested: Boolean(u.demoRequestedAt),
         excluded: u.excluded,
         teamHint: u.teamHint,
         business: u.businessEmail,
@@ -120,7 +115,7 @@ export async function POST(req: NextRequest) {
     });
   } catch (e) {
     return NextResponse.json(
-      { error: `Couldn't read the report: ${(e as Error).message}` },
+      { error: `Couldn't load users: ${(e as Error).message}` },
       { status: 400 }
     );
   }
