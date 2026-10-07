@@ -2,10 +2,21 @@
 
 import { useState } from "react";
 import { createCampaignAction } from "@/app/actions";
+import { EmailEditor } from "@/app/components/EmailEditor";
 
 type Sheet = { name: string; count: number };
+export type SenderOption = { key: string; name: string; email: string; title: string; bookingLink: string };
 
-export function CampaignForm({ defaultTemplate }: { defaultTemplate: string }) {
+const COLD_PLACEHOLDERS = ["company", "senderName", "senderTitle", "bookingLink", "demoButton", "signature"];
+
+export function CampaignForm({
+  defaultTemplate,
+  senders,
+}: {
+  defaultTemplate: string;
+  senders: SenderOption[];
+}) {
+  const [senderKey, setSenderKey] = useState("");
   const [sheets, setSheets] = useState<Sheet[] | null>(null);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(false);
@@ -44,6 +55,15 @@ export function CampaignForm({ defaultTemplate }: { defaultTemplate: string }) {
     });
   }
 
+  // Preview as the pinned mailbox, or the first one when round-robining.
+  const preview = senders.find((s) => s.key === senderKey) ?? senders[0] ?? {
+    key: "",
+    name: "Olum",
+    email: "",
+    title: "",
+    bookingLink: "",
+  };
+
   const multi = sheets && sheets.length > 1;
   const allSelected = sheets ? selected.size === sheets.length : false;
   const totalSelected = sheets
@@ -56,12 +76,22 @@ export function CampaignForm({ defaultTemplate }: { defaultTemplate: string }) {
         <label>Campaign name</label>
         <input name="name" placeholder="Singapore — bookkeeping July" required />
 
-        <label>Subject line</label>
-        <input
-          name="subject"
-          defaultValue="Businesses searching for bookkeeping help in Singapore"
-          required
-        />
+        <label>Send from</label>
+        <select name="senderKey" value={senderKey} onChange={(e) => setSenderKey(e.target.value)}>
+          <option value="">All mailboxes — split evenly ({senders.length} senders)</option>
+          {senders.map((s) => (
+            <option key={s.key} value={s.key}>
+              {s.name} — {s.email}
+            </option>
+          ))}
+        </select>
+        <p className="hint">
+          {senderKey
+            ? `Every email in this campaign goes out from ${
+                senders.find((s) => s.key === senderKey)?.email ?? "the selected mailbox"
+              }.`
+            : "Recipients are round-robined across every configured mailbox. Pick one to send the whole list from a single address."}
+        </p>
 
         <label>Recipient list (.xlsx)</label>
         <input type="file" name="file" accept=".xlsx,.xls" required onChange={onFile} />
@@ -114,13 +144,17 @@ export function CampaignForm({ defaultTemplate }: { defaultTemplate: string }) {
           <input type="hidden" name="sheets" value={sheets[0].name} />
         )}
 
-        <label>Body template</label>
-        <textarea name="bodyTemplate" defaultValue={defaultTemplate} required />
-        <div className="mono-note" style={{ marginTop: 8 }}>
-          Placeholders: <code>{"{{company}}"}</code> <code>{"{{senderName}}"}</code>{" "}
-          <code>{"{{senderTitle}}"}</code> <code>{"{{bookingLink}}"}</code>. Spintax{" "}
-          <code>{"{a|b|c}"}</code> varies each email so no two are identical.
-        </div>
+        <label>Email</label>
+        <EmailEditor
+          subjectName="subject"
+          bodyName="bodyTemplate"
+          defaultSubject="Businesses searching for bookkeeping help in Singapore"
+          defaultBody={defaultTemplate}
+          sender={{ displayName: preview.name, title: preview.title, bookingLink: preview.bookingLink }}
+          senderEmail={preview.email}
+          sample={{ company: "Acme Bookkeeping Pte Ltd", toEmail: "hello@acmebookkeeping.sg" }}
+          placeholders={COLD_PLACEHOLDERS}
+        />
 
         <div className="actions">
           <button type="submit" disabled={submitting || loading || (multi ? selected.size === 0 : false)}>

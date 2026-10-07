@@ -2,7 +2,7 @@ import { sql, logEvent, recordSentEmail, withSchema } from "./db";
 import { getSender, getSenderKeys, getDelayConfig, getBusinessHours, MAX_SENDS_PER_TICK } from "./env";
 import { sendMail } from "./smtp";
 import { pollInbox } from "./imap";
-import { renderTemplate, textToHtml, buildFooter } from "./template";
+import { composeEmail, textToHtml } from "./template";
 import type { Sender } from "./types";
 import { computeSchedule, shuffle } from "./schedule";
 import { notifyTeam } from "./notify";
@@ -206,27 +206,24 @@ export async function processDueSends(): Promise<{ sent: number; failed: number 
     const sender = getSender(r.sender_key);
 
     try {
-      // Humanise: spintax varies the subject per send; footer adds a real
-      // signature + unsubscribe line; send multipart text + HTML.
-      // Subjects go through the same pipeline as bodies now: report campaigns
-      // put {{site}} in the subject line, and renderTemplate spins it too.
-      const subject = renderTemplate(r.subject_override ?? camp.subject, {
+      // Humanise: spintax varies subject and body per send. Every email goes
+      // out as the branded HTML layout plus a plain-text part, with the
+      // org/unsubscribe footer; report campaigns fill {{site}} etc. from vars.
+      const mail = composeEmail({
+        subject: r.subject_override ?? camp.subject,
+        body: r.body_override ?? camp.body_template,
         company: r.name,
         sender,
         extra: r.vars ?? undefined,
       });
-      const bodyText =
-        renderTemplate(r.body_override ?? camp.body_template, {
-          company: r.name,
-          sender,
-          extra: r.vars ?? undefined,
-        }) + buildFooter(sender);
+      const subject = mail.subject;
+      const bodyText = mail.text;
       await sendMail({
         sender,
         to: r.email,
         subject,
         text: bodyText,
-        html: textToHtml(bodyText),
+        html: mail.html,
         headers: {
           "List-Unsubscribe": `<mailto:${sender.email}?subject=unsubscribe>`,
           "List-Unsubscribe-Post": "List-Unsubscribe=One-Click",
@@ -243,6 +240,7 @@ export async function processDueSends(): Promise<{ sent: number; failed: number 
           company: r.name,
           subject,
           body: bodyText,
+          html: mail.html,
         });
       } catch (logErr) {
         await logEvent("sentlog_failed", String(r.id), {

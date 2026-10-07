@@ -14,16 +14,17 @@ import { sql } from "@/lib/db";
 import {
   getMeetingTzOffset,
   getSender,
+  getSenderKeys,
   getReportSenderKey,
   getFounderName,
-  getInternalDomains,
-  getTeamEmailHints,
 } from "@/lib/env";
-import { parseUsersReport, SEGMENT_ORDER } from "@/lib/report";
+import { SEGMENT_ORDER } from "@/lib/report";
+import { loadReportUsers, type ReportSource } from "@/lib/report-source";
 import type { Segment } from "@/lib/report";
 import { buildRows, selectRecipients, emptyCopy } from "@/lib/report-campaign";
 import type { ReportCampaignConfig } from "@/lib/report-campaign";
 import type { SenderKey } from "@/lib/types";
+import { approveDrafts, rejectDrafts, saveDraftEdit, syncActivity } from "@/lib/activity";
 
 /** Interpret a `datetime-local` value ("2026-07-25T14:30") as IST wall-clock
  *  time and return the real UTC instant. */
@@ -41,6 +42,14 @@ export async function createCampaignAction(formData: FormData): Promise<void> {
   if (!name || !subject || !bodyTemplate || !file || file.size === 0) {
     throw new Error("Name, subject, body and an Excel file are all required.");
   }
+
+  // Blank => round-robin every mailbox; otherwise pin the whole list to one.
+  // Validated against the live keys so a stale form can't name a dead mailbox.
+  const picked = String(formData.get("senderKey") ?? "").trim();
+  if (picked && !getSenderKeys().includes(picked as SenderKey)) {
+    throw new Error("That sender mailbox is no longer configured.");
+  }
+  const senderKey = picked ? (picked as SenderKey) : undefined;
 
   // Selected sheets (empty => all sheets merged).
   const sheets = formData.getAll("sheets").map(String).filter(Boolean);
@@ -60,6 +69,7 @@ export async function createCampaignAction(formData: FormData): Promise<void> {
     sourceFile: file.name,
     rows: parsed.rows,
     duplicatesRemoved: parsed.duplicates,
+    senderKey,
   });
 
   revalidatePath("/");
@@ -76,9 +86,11 @@ export async function createCampaignAction(formData: FormData): Promise<void> {
  */
 export async function createReportCampaignAction(formData: FormData): Promise<void> {
   const name = String(formData.get("name") ?? "").trim();
+  const source: ReportSource = formData.get("source") === "xlsx" ? "xlsx" : "feed";
   const file = formData.get("file") as File | null;
-  if (!name || !file || file.size === 0) {
-    throw new Error("Campaign name and the report file are both required.");
+  if (!name) throw new Error("Give the campaign a name.");
+  if (source === "xlsx" && (!file || file.size === 0)) {
+    throw new Error("Choose the users report file, or switch to the live users feed.");
   }
 
   const senderKey = (String(formData.get("senderKey") ?? "").trim() ||
@@ -122,10 +134,7 @@ export async function createReportCampaignAction(formData: FormData): Promise<vo
     copy,
   };
 
-  const parsed = await parseUsersReport(await file.arrayBuffer(), {
-    internalDomains: getInternalDomains(),
-    teamHints: getTeamEmailHints(),
-  });
+  const parsed = await loadReportUsers(source, file);
 
   // Re-apply the segment filter even to an explicit allow-list, so unticking a
   // whole segment can't be defeated by stale checkboxes left in the form.
@@ -141,7 +150,7 @@ export async function createReportCampaignAction(formData: FormData): Promise<vo
     // Campaign-level copy is only a fallback — every recipient carries its own.
     subject: copy[segments[0]].subject,
     bodyTemplate: copy[segments[0]].body,
-    sourceFile: file.name,
+    sourceFile: source === "xlsx" && file ? file.name : "Live users feed",
     rows: buildRows(chosen, cfg, sender),
     duplicatesRemoved: parsed.duplicates,
     senderKey,
@@ -275,4 +284,47 @@ export async function deleteEventAction(formData: FormData): Promise<void> {
 export async function clearActivityAction(): Promise<void> {
   await sql`DELETE FROM events`;
   revalidatePath("/");
+}
+
+// ─── Activity outreach approvals ─────────────────────────────────────
+
+function draftIds(formData: FormData): number[] {
+  return formData
+    .getAll("id")
+    .map((v) => Number(v))
+    .filter((n) => Number.isInteger(n) && n > 0);
+}
+
+export async function approveDraftsAction(formData: FormData): Promise<void> {
+  const ids = draftIds(formData);
+  // A single-draft approve carries its (possibly edited) text: save it first so
+  // what gets queued is exactly what the approver was looking at.
+  if (ids.length === 1 && formData.has("subject")) {
+    const subject = String(formData.get("subject") ?? "").trim();
+    const body = String(formData.get("body") ?? "").trim();
+    if (!subject || !body) throw new Error("Subject and body can't be empty.");
+    await saveDraftEdit(ids[0], subject, body);
+  }
+  await approveDrafts(ids);
+  revalidatePath("/approvals");
+  revalidatePath("/");
+}
+
+export async function rejectDraftsAction(formData: FormData): Promise<void> {
+  await rejectDrafts(draftIds(formData));
+  revalidatePath("/approvals");
+}
+
+export async function saveDraftAction(formData: FormData): Promise<void> {
+  const [id] = draftIds(formData);
+  const subject = String(formData.get("subject") ?? "").trim();
+  const body = String(formData.get("body") ?? "").trim();
+  if (!id || !subject || !body) throw new Error("Subject and body can't be empty.");
+  await saveDraftEdit(id, subject, body);
+  revalidatePath("/approvals");
+}
+
+export async function syncActivityNowAction(): Promise<void> {
+  await syncActivity({ force: true });
+  revalidatePath("/approvals");
 }

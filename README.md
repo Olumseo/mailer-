@@ -32,24 +32,101 @@ and fires meeting reminders. Nothing sleeps; everything is resumable.
 - **Meetings handler** — log a booked meeting (person, company, website, meeting ID, time).
   The team is notified immediately, and the attendee gets automatic **24h + 1h reminders**.
 
-## 1. Azure app registrations (permissions)
+## 1. Mailboxes (Zoho SMTP or Microsoft 365 Graph)
 
-Each of the 3 mailboxes uses client-credentials auth. In **Azure Portal → App registrations
-→ (each app) → API permissions**, add **Application** permissions and click
-**"Grant admin consent for olum.ai"**:
+Each sender is a numbered block of env vars (`SENDER_EMAIL_1`, `_2`, …). A sender uses one of
+two transports, picked automatically:
+
+| Mailbox | Transport | Credentials |
+|---|---|---|
+| Zoho (`@tryolumai.com`) | SMTP + IMAP | `SMTP_PASS_N` — a Zoho app-specific password |
+| Gmail / Google Workspace | SMTP + IMAP | `SMTP_PASS_N` (app password) **or** `GOOGLE_REFRESH_TOKEN_N` (OAuth) |
+| Microsoft 365 / Outlook (`@olum.ai`) | Microsoft Graph | `GRAPH_CLIENT_ID_N` + `GRAPH_CLIENT_SECRET_N` |
+
+A sender with `GRAPH_CLIENT_ID_N` set and no `SMTP_PASS_N` is treated as a Graph mailbox;
+`SENDER_TRANSPORT_N=graph|smtp` forces it. Microsoft retired basic-auth SMTP, so an M365
+mailbox **must** go through Graph — there is no password to put in `SMTP_PASS_N`.
+
+Hosts are resolved per sender: explicit `SMTP_HOST_N`/`IMAP_HOST_N` win, else the
+`SENDER_PROVIDER_N` preset (`gmail`, `zoho`, `zoho-com`), else a preset inferred from the
+address domain (`@gmail.com` → Gmail), else the `ZOHO_*` globals. So senders on different
+providers can run side by side.
+
+### Adding a Gmail mailbox
+
+Pick one of two auth methods. If `GOOGLE_REFRESH_TOKEN_N` is set the sender uses OAuth;
+otherwise it uses the app password in `SMTP_PASS_N`.
+
+**A. App password** (simplest, but requires 2-Step Verification on the account)
+
+1. [myaccount.google.com/security](https://myaccount.google.com/security) → turn on
+   **2-Step Verification**. App passwords do not exist without it.
+2. [myaccount.google.com/apppasswords](https://myaccount.google.com/apppasswords) → create one.
+   Paste the 16 characters into `SMTP_PASS_N` **with no spaces**. The normal account password
+   will not work.
+
+**B. OAuth 2.0** (no 2FA needed; more setup). One Google Cloud project covers every Gmail
+mailbox — the refresh token is per mailbox.
+
+1. [console.cloud.google.com](https://console.cloud.google.com) → create or pick a project.
+2. **APIs & Services → Library** → enable the **Gmail API**.
+3. **OAuth consent screen** → *External* → add the scope `https://mail.google.com/`, and add
+   the mailbox under *Test users*. The narrower `gmail.send` scope will not work — IMAP reply
+   polling needs the full mail scope, which Google classes as **restricted**.
+4. **Publish the app.** Left in *Testing*, Google expires refresh tokens after **7 days** and
+   sending breaks weekly. Publishing a restricted scope may require Google's app-verification
+   review.
+5. **Credentials → Create credentials → OAuth client ID → Desktop app.** That client type is
+   what permits the `http://localhost:53682/` redirect the setup script listens on. Put the id
+   and secret in `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET`.
+6. Run the consent flow and paste the line it prints into `.env`:
+
+   ```bash
+   npx tsx scripts/google-oauth-setup.ts --sender 6
+   ```
+
+   Google will warn that the app is unverified — *Advanced → Go to … (unsafe)*. Sign in **as
+   the mailbox being authorised**, not your own account.
+
+**Either way:** enable IMAP on the mailbox — Gmail → Settings → See all settings →
+Forwarding and POP/IMAP → *Enable IMAP*. Without it the mailbox sends fine but never
+registers replies. Then set `SENDER_EMAIL_N` / `SENDER_NAME_N` and run `npm run verify:mail`.
+
+> 📉 **Volume.** A free `@gmail.com` account is capped around 500 recipients/day (Workspace
+> ~2,000), and Gmail is stricter than Zoho about cold outreach from a fresh account. Warm it
+> up slowly and keep `MAX_SENDS_PER_TICK` low.
+
+### Checking mailboxes
+
+```bash
+npm run verify:mail                                        # every sender
+npx tsx scripts/verify-senders.ts --sender 6               # just one
+npx tsx scripts/verify-senders.ts --sender 6 --send you@example.com   # real test email
+```
+
+### Azure app registration (Graph senders only)
+
+In **Azure Portal → App registrations → (your app)**:
+
+1. **Overview** — copy the *Application (client) ID* → `GRAPH_CLIENT_ID_N`, and the
+   *Directory (tenant) ID* → `GRAPH_TENANT_ID` (shared by all Graph senders).
+2. **Certificates & secrets → New client secret** — copy the **Value** (not the Secret ID) into
+   `GRAPH_CLIENT_SECRET_N`. It is shown once and it **expires**; a dead secret shows up as
+   `AADSTS7000222` in the cron log.
+3. **API permissions** — add **Application** (not Delegated) permissions, then
+   **"Grant admin consent"**:
 
 | Permission | Type | Why |
 |---|---|---|
-| `Mail.Send` | Application | Send the campaign (you already have this) |
-| `Mail.Read` | Application | **Add this** — lets the tool detect replies and alert Barath |
+| `Mail.Send` | Application | Send the campaign |
+| `Mail.Read` | Application | Detect replies and alert the team |
 
-> ⚠️ **Check your client IDs.** `CLIENT_ID_2` (rohann) and `CLIENT_ID_3` (rohansathish) are the
-> same GUID in what you sent me. Each mailbox is normally its own app registration with its own
-> client ID — confirm account 2's client ID before going live, or reply detection/sending for
-> that mailbox may misbehave.
+> ⚠️ **One app per mailbox.** Sharing a client ID across mailboxes works, but one expired secret
+> then takes every mailbox down at once. (The older `outreach-mailer/` CLI had `CLIENT_ID_2` and
+> `CLIENT_ID_3` set to the same GUID — don't carry that over.)
 
-> 🔒 **Optional hardening.** Application `Mail.Send`/`Mail.Read` grant access to *every* mailbox
-> in the tenant. Lock each app to just its one mailbox with an Exchange
+> 🔒 **Hardening.** Application `Mail.Send`/`Mail.Read` grant access to *every* mailbox in the
+> tenant. Lock each app to its one mailbox with an Exchange
 > [Application Access Policy](https://learn.microsoft.com/en-us/graph/auth-limit-mailbox-access)
 > (`New-ApplicationAccessPolicy`).
 
@@ -123,12 +200,95 @@ the same atomic claim, so they can even run at the same time without double-send
 4. **Meetings** → log a booking; reminders fire on each tick.
 5. Replies to any sender mailbox auto-notify Barath within one tick.
 
+## Activity outreach (live users feed + approvals)
+
+Writes to Olum users automatically, based on what they actually did in the product, and
+**never sends anything without a person approving it**.
+
+```
+cron tick ─▶ GET olum-backend /api/v1/auth/outreach/users   (X-Outreach-Key)
+          ─▶ new activity per user?  ─▶ draft  ─▶ email APPROVER_EMAIL "N drafts waiting"
+/approvals ─▶ edit / Approve / Reject ─▶ approved draft is queued on that day's
+              "Activity outreach · YYYY-MM-DD" campaign ─▶ sent by the normal tick
+```
+
+**Which letter.** A *new* user (signed up within `ACTIVITY_NEW_USER_DAYS`, never emailed by
+any campaign) gets **"your site has been analysed"** once their first analysis finishes — with
+their site and a link to the dashboard. Until that analysis finishes they're left alone.
+Someone who has **seen their results but never asked for a demo** (no row in the backend's
+demo requests for their email) gets the **demo invite**: their activity recapped in a card and a
+"Book a demo" button. Everyone else gets the letter for their funnel segment (saw the dashboard /
+ran an analysis but never saw results / analysis stuck / analysis failed / signed up and never
+ran anything) — the same per-segment copy as the users-feedback campaign, filled with their own
+sites, run counts, landing page, the app sections they opened, and errors.
+
+**When.** A draft is only created when a user's activity *changes* (segment, run counts, sites,
+dashboard landing), and never:
+- within `ACTIVITY_COOLDOWN_DAYS` of any email we sent them (any campaign),
+- while they're mid-session (`ACTIVITY_SETTLE_MINUTES` since their last activity),
+- for internal, disposable-domain or team-test accounts.
+
+A newer change replaces a still-pending draft (shown as *replaced*). A rejected draft is not
+re-created for the same activity.
+
+**First run.** With `ACTIVITY_BACKFILL=false` (default) the first sync only records everyone's
+current state and drafts nothing, so switching this on doesn't dump hundreds of letters about
+old activity on the approver. From then on, only new activity is drafted.
+
+**Approving.** `/approvals` shows each draft with the user's activity, the subject, and the
+body in the code | preview editor (blocks like `{{activityCard}}` stay as placeholders in the code
+and are filled from the user's data in the preview and at send), and *Approve & send* / *Save
+edits* / *Reject*, plus *Approve all*. Approved
+emails go out from `ACTIVITY_SENDER` with the usual jitter, business hours, footer and
+List-Unsubscribe header; they appear on **Sent**, and replies are detected like any campaign.
+
+**Setup.**
+1. Backend: set `OUTREACH_FEED_KEY` (a long random string) in authservice's env and restart.
+   The feed is off (503) until it's set.
+2. Here: `ACTIVITY_OUTREACH_ENABLED=true`, `OLUM_FEED_URL`, `OLUM_FEED_KEY` (same value),
+   `APPROVER_EMAIL`, `APP_URL`. See `.env.example`.
+3. The tables create themselves on first use (or run `/api/setup`).
+
+```bash
+npm run activity:selftest   # decision rules + full draft/approve round-trip, in memory, sends nothing
+```
+
+## Email design (every message)
+
+Every email — cold campaigns, user feedback, activity drafts, meeting reminders, team
+notifications — goes out in one branded layout matching olum.ai's own emails: cream page, white
+card with a coral top rule, italic serif **Olum.** wordmark, ink text, blue buttons, an
+org/unsubscribe footer, plus a plain-text part. It lives in `src/lib/email-html.ts`; one
+function, `composeEmail()` in `src/lib/template.ts`, renders both the send and the editor preview,
+so the preview is exactly what goes out.
+
+Templates are **content HTML**: bare `<p>`, `<a>`, `<ol>`, `<h2>`, `<strong>` — styles are
+stamped on at send time. Spintax `{a|b}` and `{{placeholders}}` work as before (values are
+HTML-escaped). Blocks that expand to finished HTML:
+
+| Block | What it renders |
+|---|---|
+| `{{demoButton}}` | "Book a demo" button → the booking link (dropped when there's none) |
+| `{{callButton}}` | quieter "Grab 15 minutes" button → the booking link |
+| `{{dashboardButton}}` | "Open your dashboard" button (activity emails) |
+| `{{activityCard}}` | the user's activity: site, signup date, landing page they came in through, runs, pages crawled, dashboard reached, sections opened, last active |
+| `{{signature}}` | sender name and title |
+
+Plain-text templates (campaigns created before this) still work — they're turned into
+paragraphs in the same layout. The **editor** (new/edit campaign, user feedback, approvals) is
+split like GitHub: HTML on the left with line numbers and one-click blocks, the email on the
+right with desktop/mobile widths and *Shuffle* to see another spintax variant. **Sent** shows each
+email exactly as it was rendered.
+
 ## Product-feedback campaigns
 
-A second campaign type, at **/campaigns/report**, for writing to people who are *already users*
-rather than to a cold list. It takes the `Olum_Prod_Users_Report.xlsx` the product exports
-(Name, Email, Landed dashboard, Workflow state, Sites analysed, UI issue events…) — a completely
-different shape from a lead list, so it has its own parser.
+A second campaign type, at **/campaigns/report** ("User feedback" in the nav), for writing to
+people who are *already users* rather than to a cold list. By default it reads them **live from
+the backend feed** (`OLUM_FEED_URL` / `OLUM_FEED_KEY`, the same feed as activity outreach) — who
+signed up, which landing page they came in through, what they ran, which sections they opened,
+whether they've asked for a demo. You can still upload the `Olum_Prod_Users_Report.xlsx` the
+product exports instead (Name, Email, Landed dashboard, Workflow state, Sites analysed, UI issue
+events…); both produce the same rows.
 
 **Segmentation.** Each user is placed in one of five buckets from their own telemetry:
 

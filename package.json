@@ -16,7 +16,11 @@
     "company:selftest": "tsx scripts/company-name-selftest.ts",
     "report:selftest": "tsx scripts/report-selftest.ts",
     "report:dbtest": "tsx scripts/report-dbtest.ts",
-    "report:migrationtest": "tsx scripts/report-migrationtest.ts"
+    "report:migrationtest": "tsx scripts/report-migrationtest.ts",
+    "verify:graph": "tsx scripts/verify-senders.ts --transport graph",
+    "verify:mail": "tsx scripts/verify-senders.ts",
+    "oauth:google": "tsx scripts/google-oauth-setup.ts",
+    "activity:selftest": "tsx scripts/activity-selftest.ts"
   },
   "dependencies": {
     "@electric-sql/pglite": "^0.5.4",

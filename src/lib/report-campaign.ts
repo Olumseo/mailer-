@@ -3,7 +3,7 @@
 // what gets stored on the recipient (spintax aside — that spins per send).
 
 import type { CampaignRow } from "./engine";
-import { renderTemplate } from "./template";
+import { composeEmail } from "./template";
 import { REPORT_COPY, buildReportVars } from "./report-templates";
 import type { ReportUser, Segment } from "./report";
 import { SEGMENT_ORDER } from "./report";
@@ -56,20 +56,31 @@ export function selectRecipients(
   return users.filter((u) => defaultIncluded(u, cfg));
 }
 
-/** Render one user's email exactly as it will be sent (one spintax variant). */
+/** Render one user's email exactly as it will be sent (one spintax variant).
+ *  `body` is the plain-text part; `html` the branded document. */
 export function renderFor(
   u: ReportUser,
   cfg: ReportCampaignConfig,
   sender: Sender
-): { subject: string; body: string } {
+): { subject: string; body: string; html: string } {
   const { subject, body } = copyFor(cfg, u.segment);
-  const extra = buildReportVars(u, {
+  const mail = composeEmail({
+    subject,
+    body,
+    company: u.name || u.email,
+    sender,
+    extra: varsFor(u, cfg, sender),
+  });
+  return { subject: mail.subject, body: mail.text, html: mail.html };
+}
+
+/** The placeholder values one user's letter is filled with. */
+export function varsFor(u: ReportUser, cfg: ReportCampaignConfig, sender: Sender): Record<string, string> {
+  return buildReportVars(u, {
     bookingLink: cfg.bookingLink,
     founderName: cfg.founderName,
     senderTitle: sender.title,
   });
-  const vars = { company: u.name || u.email, sender, extra };
-  return { subject: renderTemplate(subject, vars), body: renderTemplate(body, vars) };
 }
 
 export function buildRows(
@@ -89,11 +100,7 @@ export function buildRows(
       segment: u.segment,
       subjectOverride: subject,
       bodyOverride: body,
-      vars: buildReportVars(u, {
-        bookingLink: cfg.bookingLink,
-        founderName: cfg.founderName,
-        senderTitle: sender.title,
-      }),
+      vars: varsFor(u, cfg, sender),
     };
   });
 }

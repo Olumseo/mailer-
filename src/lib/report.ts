@@ -41,6 +41,16 @@ export interface ReportUser {
   apiErrorCalls: number;
   authProvider: string;
   notes: string;
+  /** Which page they signed up through (home, ppc-landing-1…), when recorded. */
+  landingPage: string;
+  /** Campaign/source tag that page carried (utm source etc.). */
+  landingSource: string;
+  /** Last app route they were on, e.g. /app/overview. */
+  lastRoute: string;
+  /** App sections they have opened at least once, oldest first. */
+  pagesReached: string[];
+  /** When they asked for a demo through the site ("" = never). */
+  demoRequestedAt: string;
 
   // ─ derived ─
   segment: Segment;
@@ -75,6 +85,8 @@ const H = {
   apiErrors: ["api error calls", "api errors"],
   auth: ["auth provider"],
   notes: ["notes"],
+  landingPage: ["landing page", "signup landing page"],
+  landingSource: ["landing source", "signup source"],
 } as const;
 
 function lower(row: Record<string, unknown>): Map<string, unknown> {
@@ -156,7 +168,7 @@ const FREE_MAIL = [
   "zoho.com", "mail.com", "gmx.com", "yandex.com",
 ];
 
-function domainOf(email: string): string {
+export function domainOf(email: string): string {
   return email.split("@")[1]?.toLowerCase() ?? "";
 }
 
@@ -167,7 +179,7 @@ export interface ExcludeConfig {
   teamHints: string[];
 }
 
-function classifyExclusion(
+export function classifyExclusion(
   u: { email: string; role: string; notes: string },
   cfg: ExcludeConfig
 ): { excluded: ExcludeReason; teamHint: boolean } {
@@ -196,7 +208,7 @@ function classifyExclusion(
 // therefore only ever promotes a user; the backend-stamped `Workflow state` is
 // the primary signal, exactly as the legend recommends.
 
-function classifySegment(u: {
+export function classifySegment(u: {
   landedDashboard: boolean;
   workflowState: string;
   analysesCompleted: number;
@@ -268,6 +280,11 @@ function toUser(row: Record<string, unknown>, cfg: ExcludeConfig): ReportUser | 
     apiErrorCalls,
     authProvider: str(m, H.auth),
     notes,
+    landingPage: str(m, H.landingPage),
+    landingSource: str(m, H.landingSource),
+    lastRoute: "",
+    pagesReached: [],
+    demoRequestedAt: "",
 
     segment: classifySegment(base),
     primarySite: sitesAnalysed[0] ?? sitesCrawled[0] ?? "",
@@ -344,4 +361,87 @@ export function summarise(users: ReportUser[]): Record<Segment, number> {
   const out = Object.fromEntries(SEGMENT_ORDER.map((s) => [s, 0])) as Record<Segment, number>;
   for (const u of users) if (!u.excluded) out[u.segment]++;
   return out;
+}
+
+// ─── From the live backend feed (activity outreach) ──────────────────
+// Same ReportUser shape as the .xlsx parser, so segmentation, exclusions and
+// the per-segment letters behave identically whichever way a user arrives.
+
+/** One row of GET /api/v1/auth/outreach/users (olum-backend). */
+export interface FeedUser {
+  id: string;
+  email: string;
+  full_name: string;
+  plan: string;
+  auth_provider: string;
+  signed_up_at: string | null;
+  last_visited_at: string | null;
+  workflow_state: string;
+  landed_dashboard: boolean;
+  landed_dashboard_at: string | null;
+  sites_analysed: string[];
+  sites_crawled: string[];
+  pages_crawled: number;
+  analyses_completed: number;
+  analyses_failed: number;
+  first_analysis_completed_at: string | null;
+  last_analysis_completed_at: string | null;
+  last_analysis_failed_at: string | null;
+  ui_issue_events: number;
+  issue_kinds: string;
+  api_error_calls: number;
+  // Added with the landing-page / journey follow-up — optional so the mailer
+  // keeps working against a backend that doesn't send them yet.
+  signup_landing_page?: string | null;
+  signup_source?: string | null;
+  signup_landing_at?: string | null;
+  last_route?: string | null;
+  pages_reached?: string[] | null;
+  demo_requested_at?: string | null;
+}
+
+export function userFromFeed(f: FeedUser, cfg: ExcludeConfig): ReportUser {
+  const email = (f.email || "").trim().toLowerCase();
+  const sitesAnalysed = (f.sites_analysed ?? []).filter((s) => s.includes("."));
+  const sitesCrawled = (f.sites_crawled ?? []).filter((s) => s.includes("."));
+  const base = {
+    landedDashboard: Boolean(f.landed_dashboard),
+    workflowState: f.workflow_state || "",
+    analysesCompleted: Number(f.analyses_completed) || 0,
+    analysesFailed: Number(f.analyses_failed) || 0,
+    sitesAnalysed,
+    sitesCrawled,
+  };
+  // The feed only carries customer accounts (role "user"), so role is fixed.
+  const { excluded, teamHint } = classifyExclusion({ email, role: "user", notes: "" }, cfg);
+  const domain = domainOf(email);
+  const uiIssueEvents = Number(f.ui_issue_events) || 0;
+  const apiErrorCalls = Number(f.api_error_calls) || 0;
+  return {
+    name: f.full_name || "",
+    firstName: personFirstName(f.full_name || ""),
+    email,
+    role: "user",
+    plan: f.plan || "",
+    signedUp: f.signed_up_at || "",
+    lastVisited: f.last_visited_at || "",
+    ...base,
+    pagesCrawled: Number(f.pages_crawled) || 0,
+    uiIssueEvents,
+    issueTypes: f.issue_kinds || "",
+    apiErrorCalls,
+    authProvider: f.auth_provider || "",
+    notes: "",
+    landingPage: f.signup_landing_page || "",
+    landingSource: f.signup_source || "",
+    lastRoute: f.last_route || "",
+    pagesReached: Array.isArray(f.pages_reached) ? f.pages_reached.filter(Boolean) : [],
+    demoRequestedAt: f.demo_requested_at || "",
+    segment: classifySegment(base),
+    primarySite: sitesAnalysed[0] ?? sitesCrawled[0] ?? "",
+    highFriction: uiIssueEvents > 0 || base.analysesFailed > 0 || apiErrorCalls >= 20,
+    businessEmail: Boolean(domain) && !FREE_MAIL.includes(domain) && !DISPOSABLE.includes(domain),
+    excluded,
+    teamHint,
+  };
 }

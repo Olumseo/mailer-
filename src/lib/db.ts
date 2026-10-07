@@ -74,6 +74,44 @@ const CREATE_STATEMENTS: string[] = [
       detail     JSONB,
       created_at TIMESTAMPTZ NOT NULL DEFAULT now()
    )`,
+  // ── Activity outreach ──
+  // One row per Olum user we've seen in the live feed: what their activity
+  // looked like the last time we drafted for them, and when we last emailed.
+  `CREATE TABLE IF NOT EXISTS activity_users (
+      user_id          TEXT PRIMARY KEY,
+      email            TEXT NOT NULL,
+      last_fingerprint TEXT,
+      last_drafted_at  TIMESTAMPTZ,
+      last_emailed_at  TIMESTAMPTZ,
+      first_seen_at    TIMESTAMPTZ NOT NULL DEFAULT now()
+   )`,
+  // A personalised email waiting for (or past) a human decision. Subject/body
+  // are the exact text the approver sees and edits; approval queues it as a
+  // recipient of that day's "Activity outreach" campaign (recipient_id).
+  `CREATE TABLE IF NOT EXISTS activity_drafts (
+      id           SERIAL PRIMARY KEY,
+      user_id      TEXT NOT NULL,
+      email        TEXT NOT NULL,
+      name         TEXT,
+      site         TEXT,
+      kind         TEXT NOT NULL,
+      fingerprint  TEXT NOT NULL,
+      activity     JSONB,
+      subject      TEXT NOT NULL,
+      body         TEXT NOT NULL,
+      sender_key   TEXT NOT NULL,
+      status       TEXT NOT NULL DEFAULT 'pending',
+      recipient_id INTEGER,
+      error        TEXT,
+      created_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
+      decided_at   TIMESTAMPTZ
+   )`,
+  `CREATE INDEX IF NOT EXISTS idx_activity_drafts_status ON activity_drafts (status, created_at DESC)`,
+  `CREATE TABLE IF NOT EXISTS kv (
+      key        TEXT PRIMARY KEY,
+      value      TEXT,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+   )`,
   `CREATE INDEX IF NOT EXISTS idx_recipients_due ON recipients (status, next_send_at)`,
   `CREATE INDEX IF NOT EXISTS idx_sent_emails_sent_at ON sent_emails (sent_at DESC)`,
 ];
@@ -89,6 +127,10 @@ const ALTER_STATEMENTS: string[] = [
   `ALTER TABLE recipients ADD COLUMN IF NOT EXISTS subject_override TEXT`,
   `ALTER TABLE recipients ADD COLUMN IF NOT EXISTS body_override TEXT`,
   `ALTER TABLE recipients ADD COLUMN IF NOT EXISTS vars JSONB`,
+  // The exact branded HTML that went out, so the Sent page can show it.
+  `ALTER TABLE sent_emails ADD COLUMN IF NOT EXISTS html TEXT`,
+  // Activity drafts keep {{activityCard}} etc. as placeholders; these values fill them.
+  `ALTER TABLE activity_drafts ADD COLUMN IF NOT EXISTS vars JSONB`,
 ];
 
 // ─── The `sql` handle: Neon normally, PGlite in snapshot mode ─────────
@@ -148,7 +190,10 @@ async function initSnapshotDb() {
   }
 
   const snap = JSON.parse(fs.readFileSync(file, "utf8")) as Record<string, Row[]>;
-  const tables = ["campaigns", "recipients", "meetings", "sent_emails", "mailbox_state", "events"];
+  const tables = [
+    "campaigns", "recipients", "meetings", "sent_emails", "mailbox_state", "events",
+    "activity_users", "activity_drafts", "kv",
+  ];
   let loaded = 0;
   for (const table of tables) {
     const rows = snap[table];
@@ -269,9 +314,10 @@ export async function recordSentEmail(rec: {
   company: string;
   subject: string;
   body: string;
+  html?: string;
 }): Promise<void> {
   await sql`
-    INSERT INTO sent_emails (campaign_id, recipient_id, sender, to_email, company, subject, body)
+    INSERT INTO sent_emails (campaign_id, recipient_id, sender, to_email, company, subject, body, html)
     VALUES (${rec.campaignId}, ${rec.recipientId ?? null}, ${rec.sender}, ${rec.to},
-            ${rec.company}, ${rec.subject}, ${rec.body})`;
+            ${rec.company}, ${rec.subject}, ${rec.body}, ${rec.html ?? null})`;
 }

@@ -1,6 +1,8 @@
 import type { Sender } from "./types";
+import { pollInboxGraph } from "./graph";
+import { getGoogleAccessToken } from "./google-oauth";
 
-// ─── Zoho IMAP reply polling (replaces Graph Mail.Read) ──────────────
+// ─── Reply polling: Zoho IMAP, or Graph Mail.Read per sender ─────────
 
 export interface InboxMessage {
   fromAddress: string;
@@ -16,8 +18,20 @@ export async function pollInbox(
   sinceIso: string,
   top = 25
 ): Promise<InboxMessage[]> {
-  if (!sender.email || !sender.pass) {
-    throw new Error(`Zoho IMAP not configured for sender ${sender.key}`);
+  if (sender.transport === "graph") return pollInboxGraph(sender, sinceIso, top);
+  if (!sender.email) {
+    throw new Error(`IMAP not configured for sender ${sender.key} — set SENDER_EMAIL_${sender.key}.`);
+  }
+  // XOAUTH2 mailboxes have no password; imapflow takes a bare access token, so
+  // mint one per poll (the helper caches it until it expires).
+  const auth =
+    sender.smtpAuth === "oauth2"
+      ? { user: sender.email, accessToken: await getGoogleAccessToken(sender) }
+      : { user: sender.user, pass: sender.pass };
+  if (sender.smtpAuth === "password" && !sender.pass) {
+    throw new Error(
+      `IMAP not configured for sender ${sender.key} — set SMTP_PASS_${sender.key}.`
+    );
   }
 
   const { ImapFlow } = await import("imapflow");
@@ -25,7 +39,7 @@ export async function pollInbox(
     host: sender.imapHost,
     port: sender.imapPort,
     secure: true,
-    auth: { user: sender.user, pass: sender.pass },
+    auth,
     logger: false,
     connectionTimeout: 15_000,
     greetingTimeout: 10_000,
