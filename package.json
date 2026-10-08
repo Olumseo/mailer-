@@ -20,7 +20,8 @@
     "verify:graph": "tsx scripts/verify-senders.ts --transport graph",
     "verify:mail": "tsx scripts/verify-senders.ts",
     "oauth:google": "tsx scripts/google-oauth-setup.ts",
-    "activity:selftest": "tsx scripts/activity-selftest.ts"
+    "activity:selftest": "tsx scripts/activity-selftest.ts",
+    "welcome:selftest": "tsx scripts/welcome-selftest.ts"
   },
   "dependencies": {
     "@electric-sql/pglite": "^0.5.4",

@@ -2,9 +2,9 @@ import { NextRequest, NextResponse } from "next/server";
 import { AUTH_COOKIE, safeEqual, sessionToken } from "@/lib/auth";
 
 // Lightweight shared-password gate for this internal tool.
-// The cron + setup endpoints authenticate with CRON_SECRET instead, so
-// they're excluded here.
-const PUBLIC_PATHS = ["/login", "/api/login", "/api/cron", "/api/setup"];
+// The cron + setup endpoints authenticate with CRON_SECRET, and the backend's
+// login hook with the shared feed key, so they're excluded here.
+const PUBLIC_PATHS = ["/login", "/api/login", "/api/cron", "/api/setup", "/api/hooks/"];
 
 // This tool is not meant to be indexed, framed, or linked out of with a
 // referrer — it shows real prospect data behind one shared password.

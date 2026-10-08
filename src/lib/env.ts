@@ -263,6 +263,29 @@ export function getActivityConfig(): ActivityConfig {
   };
 }
 
+// ─── Login welcome (backend login hook → one email per user) ─────────
+
+export interface WelcomeConfig {
+  /** Master switch. Off => the hook answers but sends nothing. */
+  enabled: boolean;
+  /** Mailbox the welcome goes out from — the founder's. */
+  senderKey: SenderKey;
+  /** Shared secret the backend sends as X-Outreach-Key (same as the feed key). */
+  hookKey: string;
+  dashboardUrl: string;
+}
+
+export function getWelcomeConfig(): WelcomeConfig {
+  const keys = getSenderKeys();
+  const explicit = opt("LOGIN_WELCOME_SENDER");
+  return {
+    enabled: opt("LOGIN_WELCOME_ENABLED", "false") === "true",
+    senderKey: explicit && keys.includes(explicit) ? explicit : keys[0],
+    hookKey: opt("OLUM_FEED_KEY").trim(),
+    dashboardUrl: opt("OLUM_DASHBOARD_URL", "https://olum.ai/app/overview").trim(),
+  };
+}
+
 /** Strip credentials out of text before it goes into an HTTP response.
  *  Driver errors love to quote the connection string back at you, and cron
  *  responses are read by a third-party scheduler's log viewer. */
